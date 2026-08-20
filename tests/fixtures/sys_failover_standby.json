@@ -1,0 +1,4 @@
+{
+  "kind": "tm:sys:failover:failoverstats",
+  "apiRawValues": {"apiAnonymous": "Failover standby for 1d 02:03:04\n"}
+}

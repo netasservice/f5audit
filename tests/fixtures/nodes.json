@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "tm:ltm:node:nodestate",
+    "name": "node-web-1",
+    "partition": "Common",
+    "fullPath": "/Common/node-web-1",
+    "address": "10.0.0.1",
+    "monitor": "default",
+    "session": "user-enabled",
+    "state": "unchecked"
+  },
+  {
+    "kind": "tm:ltm:node:nodestate",
+    "name": "node-orphan",
+    "partition": "Common",
+    "fullPath": "/Common/node-orphan",
+    "address": "10.0.0.99",
+    "monitor": "/Common/icmp ",
+    "session": "user-enabled",
+    "state": "unchecked"
+  }
+]

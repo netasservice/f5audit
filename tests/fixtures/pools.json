@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "tm:ltm:pool:poolstate",
+    "name": "pool-web",
+    "partition": "Common",
+    "fullPath": "/Common/pool-web",
+    "monitor": "/Common/mon-used ",
+    "loadBalancingMode": "round-robin"
+  },
+  {
+    "kind": "tm:ltm:pool:poolstate",
+    "name": "pool-orphan",
+    "partition": "Common",
+    "fullPath": "/Common/pool-orphan",
+    "monitor": "/Common/tcp ",
+    "loadBalancingMode": "round-robin"
+  },
+  {
+    "kind": "tm:ltm:pool:poolstate",
+    "name": "pool-irule",
+    "partition": "Common",
+    "fullPath": "/Common/pool-irule",
+    "loadBalancingMode": "least-connections-member"
+  },
+  {
+    "kind": "tm:ltm:pool:poolstate",
+    "name": "pool-idle",
+    "partition": "Common",
+    "fullPath": "/Common/pool-idle",
+    "loadBalancingMode": "round-robin"
+  }
+]

@@ -1,0 +1,30 @@
+[
+  {
+    "kind": "tm:ltm:virtual:virtualstate",
+    "name": "vs-web",
+    "partition": "Common",
+    "fullPath": "/Common/vs-web",
+    "destination": "/Common/192.0.2.10:443",
+    "pool": "/Common/pool-web",
+    "rules": ["/Common/irule-static"],
+    "enabled": true
+  },
+  {
+    "kind": "tm:ltm:virtual:virtualstate",
+    "name": "vs-idle",
+    "partition": "Common",
+    "fullPath": "/Common/vs-idle",
+    "destination": "/Common/192.0.2.11:80",
+    "pool": "/Common/pool-idle",
+    "enabled": true
+  },
+  {
+    "kind": "tm:ltm:virtual:virtualstate",
+    "name": "vs-disabled",
+    "partition": "Common",
+    "fullPath": "/Common/vs-disabled",
+    "destination": "/Common/192.0.2.12:80",
+    "pool": "/Common/pool-web",
+    "disabled": true
+  }
+]

@@ -1,0 +1,5 @@
+[
+  {"kind": "tm:ltm:monitor:http:httpstate", "name": "http", "partition": "Common", "fullPath": "/Common/http"},
+  {"kind": "tm:ltm:monitor:http:httpstate", "name": "mon-used", "partition": "Common", "fullPath": "/Common/mon-used"},
+  {"kind": "tm:ltm:monitor:http:httpstate", "name": "mon-orphan", "partition": "Common", "fullPath": "/Common/mon-orphan"}
+]

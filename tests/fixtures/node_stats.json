@@ -1,0 +1,24 @@
+{
+  "entries": {
+    "https://localhost/mgmt/tm/ltm/node/~Common~node-web-1/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/node-web-1"},
+          "serverside.totConns": {"value": 500},
+          "status.availabilityState": {"description": "unknown"},
+          "monitorStatus": {"description": "unchecked"}
+        }
+      }
+    },
+    "https://localhost/mgmt/tm/ltm/node/~Common~node-orphan/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/node-orphan"},
+          "serverside.totConns": {"value": 0},
+          "status.availabilityState": {"description": "unknown"},
+          "monitorStatus": {"description": "down"}
+        }
+      }
+    }
+  }
+}

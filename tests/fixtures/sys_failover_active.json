@@ -1,0 +1,4 @@
+{
+  "kind": "tm:sys:failover:failoverstats",
+  "apiRawValues": {"apiAnonymous": "Failover active for 32d 05:12:33\n"}
+}

@@ -1,0 +1,9 @@
+[
+  {
+    "kind": "tm:ltm:rule:rulestate",
+    "name": "irule-static",
+    "partition": "Common",
+    "fullPath": "/Common/irule-static",
+    "apiAnonymous": "when HTTP_REQUEST {\n  if { [HTTP::uri] starts_with \"/api\" } {\n    pool pool-irule\n  }\n  # pool commented-pool\n}"
+  }
+]

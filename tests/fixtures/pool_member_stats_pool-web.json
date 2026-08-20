@@ -1,0 +1,13 @@
+{
+  "entries": {
+    "https://localhost/mgmt/tm/ltm/pool/~Common~pool-web/members/~Common~node-web-1:80/stats": {
+      "nestedStats": {
+        "entries": {
+          "serverside.curConns": {"value": 3},
+          "serverside.totConns": {"value": 450},
+          "status.availabilityState": {"description": "available"}
+        }
+      }
+    }
+  }
+}

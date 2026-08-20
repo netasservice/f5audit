@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "tm:cm:device:devicestate",
+    "name": "bigip1.example.net",
+    "hostname": "bigip1.example.net",
+    "selfDevice": "true",
+    "failoverState": "active",
+    "version": "15.1.10"
+  },
+  {
+    "kind": "tm:cm:device:devicestate",
+    "name": "bigip2.example.net",
+    "hostname": "bigip2.example.net",
+    "selfDevice": "false",
+    "failoverState": "standby",
+    "version": "15.1.10"
+  }
+]

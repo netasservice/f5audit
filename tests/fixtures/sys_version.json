@@ -1,0 +1,13 @@
+{
+  "entries": {
+    "https://localhost/mgmt/tm/sys/version/0": {
+      "nestedStats": {
+        "entries": {
+          "Product": {"description": "BIG-IP"},
+          "Version": {"description": "15.1.10"},
+          "Build": {"description": "0.0.9"}
+        }
+      }
+    }
+  }
+}

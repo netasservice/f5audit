@@ -1,0 +1,40 @@
+{
+  "entries": {
+    "https://localhost/mgmt/tm/ltm/virtual/~Common~vs-web/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/vs-web"},
+          "clientside.totConns": {"value": 12345},
+          "clientside.bitsIn": {"value": 999000},
+          "clientside.bitsOut": {"value": 888000},
+          "status.availabilityState": {"description": "available"},
+          "status.enabledState": {"description": "enabled"}
+        }
+      }
+    },
+    "https://localhost/mgmt/tm/ltm/virtual/~Common~vs-idle/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/vs-idle"},
+          "clientside.totConns": {"value": 0},
+          "clientside.bitsIn": {"value": 0},
+          "clientside.bitsOut": {"value": 0},
+          "status.availabilityState": {"description": "unknown"},
+          "status.enabledState": {"description": "enabled"}
+        }
+      }
+    },
+    "https://localhost/mgmt/tm/ltm/virtual/~Common~vs-disabled/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/vs-disabled"},
+          "clientside.totConns": {"value": 0},
+          "clientside.bitsIn": {"value": 0},
+          "clientside.bitsOut": {"value": 0},
+          "status.availabilityState": {"description": "unknown"},
+          "status.enabledState": {"description": "disabled"}
+        }
+      }
+    }
+  }
+}
