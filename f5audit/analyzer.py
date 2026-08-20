@@ -6,6 +6,11 @@ Cross-cutting rules (spec section 8):
 - Traffic-based verdicts are only trusted when the device is ACTIVE;
   on a standby unit they are either skipped (default) or emitted as
   UNRELIABLE (standby) with --allow-standby.
+- Availability-based verdicts (OFFLINE dead chains) follow the same
+  standby rule: monitor results are per-unit and can differ from the
+  active unit, so they are only trusted on the ACTIVE device.
+- Availability is point-in-time: an offline chain may be maintenance,
+  not decommissioning. Every OFFLINE note says so.
 - Incomplete inventory (denied partitions/endpoints) degrades orphan
   verdicts, because a reference could live in an invisible partition.
 """
@@ -22,9 +27,22 @@ class Verdict:
     ORPHAN = "ORPHAN"
     MANUAL_REVIEW = "MANUAL REVIEW"
     INACTIVE = "INACTIVE"
+    OFFLINE_CANDIDATE = "OFFLINE (decommission candidate)"
     UNRELIABLE_STANDBY = "UNRELIABLE (standby)"
     UNRELIABLE_INVENTORY = "UNRELIABLE (incomplete inventory)"
     IN_USE = "IN USE"
+
+
+# Member availability values that count as dead-chain evidence.
+# 'user-down' is an admin forced-offline: itself decommission evidence.
+DEAD_MEMBER_STATES = {"offline", "down", "user-down"}
+# Node-level availability values meaning "no node-level monitor result";
+# for these nodes the dead-chain rule falls back to member evidence.
+UNMONITORED_NODE_STATES = {"", "unknown", "unchecked"}
+
+POINT_IN_TIME_NOTE = (
+    "Availability is point-in-time; confirm with the config owner that this is not maintenance."
+)
 
 
 @dataclass
@@ -68,6 +86,15 @@ def _conns_zero(total_conns: int | None) -> bool:
     return total_conns is not None and int(total_conns) == 0
 
 
+def _pool_is_dead(pool) -> bool:
+    """Pool offline with every member down. availability is only ever
+    populated from ltm/pool/stats, so a missing stats endpoint self-gates
+    this rule (empty string is never 'offline')."""
+    if pool.availability != "offline" or not pool.members:
+        return False
+    return all(member.availability in DEAD_MEMBER_STATES for member in pool.members)
+
+
 class Analyzer:
     def __init__(
         self, parsed: ParsedData, correlation: Correlation, *, allow_standby: bool = False
@@ -88,6 +115,7 @@ class Analyzer:
             "Traffic counters reset on reboot/stats-reset; "
             f"{system.uptime or 'device uptime unknown'}."
         )
+        self._dead_pools = {path for path, pool in parsed.pools.items() if _pool_is_dead(pool)}
 
     # ------------------------------------------------------------------
 
@@ -106,17 +134,19 @@ class Analyzer:
         if self.is_standby:
             if self.allow_standby:
                 result.warnings.append(
-                    "Device is STANDBY: traffic statistics are not "
-                    "representative. Traffic-based verdicts are marked "
+                    "Device is STANDBY: traffic statistics and monitor "
+                    "availability are not representative. Traffic- and "
+                    "availability-based verdicts are marked "
                     "UNRELIABLE (standby). Re-run against the ACTIVE unit."
                 )
             else:
                 result.stats_analysis_skipped = True
                 result.warnings.append(
-                    "Device is STANDBY: traffic-based analysis was SKIPPED "
-                    "(configuration-orphan analysis still ran). Re-run "
-                    "against the ACTIVE unit, or use --allow-standby to "
-                    "force traffic verdicts marked as UNRELIABLE."
+                    "Device is STANDBY: traffic- and availability-based "
+                    "analysis was SKIPPED (configuration-orphan analysis "
+                    "still ran). Re-run against the ACTIVE unit, or use "
+                    "--allow-standby to force those verdicts marked as "
+                    "UNRELIABLE."
                 )
         if system.partitions_denied:
             result.warnings.append(
@@ -138,9 +168,24 @@ class Analyzer:
     # ------------------------------------------------------------------
 
     def _analyze_nodes(self, result: AnalysisResult) -> None:
-        for path, _node in self.parsed.nodes.items():
+        for path, node in self.parsed.nodes.items():
             pools = self.correlation.node_to_pools.get(path)
             if pools:
+                if all(pool_path in self._dead_pools for pool_path in pools):
+                    evidence = self._node_offline_evidence(path, node, pools)
+                    if evidence and self._offline_verdict(
+                        result, result.node_verdicts, "node", path, evidence
+                    ):
+                        continue
+                elif node.availability == "offline":
+                    live = sorted(p for p in pools if p not in self._dead_pools)
+                    result.node_verdicts[path] = ObjectVerdict(
+                        Verdict.IN_USE,
+                        "Node reports offline, but is a member of pool(s) "
+                        f"{', '.join(live)} that are not offline; in use "
+                        "elsewhere, not a decommission candidate.",
+                    )
+                    continue
                 result.node_verdicts[path] = ObjectVerdict(Verdict.IN_USE)
             elif not self.inventory_complete:
                 result.node_verdicts[path] = ObjectVerdict(
@@ -151,6 +196,88 @@ class Analyzer:
                 result.node_verdicts[path] = ObjectVerdict(
                     Verdict.ORPHAN, "Not a member of any pool."
                 )
+
+    def _node_offline_evidence(self, path: str, node, pools) -> str:
+        """Evidence string when a node in an all-dead-pools set is itself a
+        decommission candidate; empty string when it is not provable."""
+        pool_list = ", ".join(sorted(pools))
+        if node.availability == "offline":
+            return (
+                f"Node reports offline (monitor status: "
+                f"{node.monitor_status or 'unknown'}); every pool membership "
+                f"({pool_list}) is an offline pool. " + POINT_IN_TIME_NOTE
+            )
+        if node.availability in UNMONITORED_NODE_STATES:
+            memberships = [
+                member
+                for pool_path in pools
+                for member in self.parsed.pools[pool_path].members
+                if member.node_full_path == path
+            ]
+            if memberships and all(
+                member.availability in DEAD_MEMBER_STATES for member in memberships
+            ):
+                return (
+                    "No node-level monitor result, but every pool membership "
+                    f"({pool_list}) reports down/offline and every containing "
+                    "pool is offline. " + POINT_IN_TIME_NOTE
+                )
+        return ""
+
+    def _virtual_is_dead(self, path: str, virtual) -> bool:
+        if virtual.availability != "offline":
+            return False
+        if path in self.correlation.virtuals_with_unprovable_pool_selection:
+            return False
+        reachable = self.correlation.virtual_to_pools.get(path)
+        if not reachable:
+            return False
+        return all(
+            pool_path in self.parsed.pools and pool_path in self._dead_pools
+            for pool_path in reachable
+        )
+
+    def _offline_verdict(
+        self,
+        result: AnalysisResult,
+        verdicts: dict[str, ObjectVerdict],
+        object_type: str,
+        path: str,
+        note: str,
+        *,
+        cap_on_dynamic: bool = True,
+    ) -> bool:
+        """Emit an availability-based OFFLINE verdict, degraded on standby
+        and capped at MANUAL REVIEW while dynamic iRules are attached.
+        Returns False when skipped so the caller falls through to the
+        existing rules."""
+        if self.is_standby:
+            if not self.allow_standby:
+                return False
+            verdicts[path] = ObjectVerdict(
+                Verdict.UNRELIABLE_STANDBY,
+                "Offline on this device, but it is standby and monitor "
+                "state may differ from the active unit. " + note,
+            )
+            return True
+        if cap_on_dynamic and self.correlation.has_attached_dynamic_irules:
+            dynamic = ", ".join(self.correlation.attached_dynamic_irules)
+            verdicts[path] = ObjectVerdict(
+                Verdict.MANUAL_REVIEW,
+                note + " Dynamic pool-selection iRules are active "
+                f"({dynamic}); the object could still be selected at runtime.",
+            )
+            result.manual_review.append(
+                ManualReviewItem(
+                    object_type,
+                    path,
+                    "Offline decommission candidate, but dynamic iRules are active",
+                    dynamic,
+                )
+            )
+            return True
+        verdicts[path] = ObjectVerdict(Verdict.OFFLINE_CANDIDATE, note)
+        return True
 
     def _analyze_virtuals(self, result: AnalysisResult) -> None:
         for path, virtual in self.parsed.virtuals.items():
@@ -173,6 +300,22 @@ class Analyzer:
                     )
                 )
                 continue
+            if self._virtual_is_dead(path, virtual):
+                reachable = ", ".join(sorted(self.correlation.virtual_to_pools[path]))
+                emitted = self._offline_verdict(
+                    result,
+                    result.virtual_verdicts,
+                    "virtual_server",
+                    path,
+                    f"Offline: every reachable pool ({reachable}) is offline "
+                    "with all members down. " + POINT_IN_TIME_NOTE,
+                    # The VS's own pool selection is provably static and dead;
+                    # dynamic iRules on other virtual servers do not change
+                    # whether this VS can serve traffic.
+                    cap_on_dynamic=False,
+                )
+                if emitted:
+                    continue
             if _conns_zero(virtual.total_conns):
                 self._traffic_verdict(
                     result.virtual_verdicts,
@@ -199,14 +342,32 @@ class Analyzer:
             verdicts[path] = ObjectVerdict(Verdict.INACTIVE, note)
 
     def _analyze_pools(self, result: AnalysisResult) -> None:
-        for path, _pool in self.parsed.pools.items():
+        for path, pool in self.parsed.pools.items():
             virtuals = self.correlation.pool_to_virtuals.get(path, set())
             irule_refs = self.correlation.pool_to_irules.get(path, set())
             policy_refs = self.correlation.pool_to_policies.get(path, set())
 
+            # ORPHAN outranks OFFLINE: an unreferenced pool is deletable
+            # without asking the config owner.
             if not virtuals and not irule_refs and not policy_refs:
                 self._unreferenced_pool_verdict(result, path)
                 continue
+
+            if path in self._dead_pools:
+                members_desc = ", ".join(
+                    f"{member.node_full_path}:{member.port} ({member.availability})"
+                    for member in pool.members
+                )
+                emitted = self._offline_verdict(
+                    result,
+                    result.pool_verdicts,
+                    "pool",
+                    path,
+                    f"Pool offline: all {len(pool.members)} member(s) down "
+                    f"({members_desc}). " + POINT_IN_TIME_NOTE,
+                )
+                if emitted:
+                    continue
 
             # Referenced pool: inactive if every attached VS has zero traffic.
             if (

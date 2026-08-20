@@ -24,6 +24,18 @@
         }
       }
     },
+    "https://localhost/mgmt/tm/ltm/virtual/~Common~vs-dead/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/vs-dead"},
+          "clientside.totConns": {"value": 0},
+          "clientside.bitsIn": {"value": 0},
+          "clientside.bitsOut": {"value": 0},
+          "status.availabilityState": {"description": "offline"},
+          "status.enabledState": {"description": "enabled"}
+        }
+      }
+    },
     "https://localhost/mgmt/tm/ltm/virtual/~Common~vs-disabled/stats": {
       "nestedStats": {
         "entries": {

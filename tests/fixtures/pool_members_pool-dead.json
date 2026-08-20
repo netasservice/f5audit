@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "tm:ltm:pool:members:membersstate",
+    "name": "node-dead:443",
+    "partition": "Common",
+    "fullPath": "/Common/node-dead:443",
+    "address": "10.0.0.50",
+    "session": "monitor-enabled",
+    "state": "down",
+    "priorityGroup": 0
+  }
+]

@@ -10,6 +10,16 @@
         }
       }
     },
+    "https://localhost/mgmt/tm/ltm/node/~Common~node-dead/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/node-dead"},
+          "serverside.totConns": {"value": 120},
+          "status.availabilityState": {"description": "offline"},
+          "monitorStatus": {"description": "down"}
+        }
+      }
+    },
     "https://localhost/mgmt/tm/ltm/node/~Common~node-orphan/stats": {
       "nestedStats": {
         "entries": {

@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 
 from f5audit.analyzer import Analyzer, Verdict
 from f5audit.correlator import correlate
+from f5audit.models import PoolMember
 from f5audit.parsing import parse_collection
 from f5audit.report import build_tables, default_report_name, write_csv, write_xlsx
 from tests.conftest import build_collection
@@ -26,6 +27,7 @@ def test_expected_sheets_exist():
         "orphan_nodes",
         "pools",
         "inactive_virtuals",
+        "dead_chains",
         "orphan_monitors",
         "manual_review",
     ]
@@ -52,10 +54,14 @@ def test_inventory_has_member_rows_and_orphan_node_rows():
 
 def test_orphan_sheets_only_contain_non_in_use_objects():
     _, tables = make_tables()
-    assert [row[0] for row in tables["orphan_nodes"].rows] == ["/Common/node-orphan"]
+    assert [row[0] for row in tables["orphan_nodes"].rows] == [
+        "/Common/node-dead",
+        "/Common/node-orphan",
+    ]
     pool_names = [row[0] for row in tables["pools"].rows]
     assert "/Common/pool-orphan" in pool_names
     assert "/Common/pool-idle" in pool_names
+    assert "/Common/pool-dead" in pool_names
     assert "/Common/pool-web" not in pool_names
     monitor_names = [row[0] for row in tables["orphan_monitors"].rows]
     assert monitor_names == ["/Common/mon-orphan"]
@@ -68,7 +74,46 @@ def test_suggested_commands_only_for_orphans():
         if row[8] == Verdict.ORPHAN:
             assert command.startswith("tmsh delete ltm pool ")
         else:
+            # OFFLINE candidates included: their commands live only on the
+            # Dead Chains sheet.
             assert command == ""
+
+
+def test_dead_chains_sheet_groups_the_whole_chain():
+    _, tables = make_tables()
+    rows = tables["dead_chains"].rows
+    assert [row[0] for row in rows] == ["/Common/pool-dead"]
+    row = rows[0]
+    assert row[3] == "/Common/node-dead:443"
+    assert row[6] == "/Common/vs-dead"
+    assert row[9] == Verdict.OFFLINE_CANDIDATE
+    commands = row[-1].splitlines()
+    assert commands == [
+        "tmsh delete ltm virtual /Common/vs-dead",
+        "tmsh delete ltm pool /Common/pool-dead",
+        "tmsh delete ltm node /Common/node-dead",
+    ]
+
+
+def test_dead_chains_sheet_omits_node_command_when_alive_elsewhere():
+    parsed = parse_collection(build_collection())
+    # node-dead is also an available member of pool-web.
+    parsed.pools["/Common/pool-web"].members.append(
+        PoolMember(
+            node_full_path="/Common/node-dead",
+            port="80",
+            partition="Common",
+            admin_state="monitor-enabled",
+            availability="available",
+        )
+    )
+    correlation = correlate(parsed)
+    analysis = Analyzer(parsed, correlation).run()
+    tables = build_tables(parsed, correlation, analysis)
+    row = tables["dead_chains"].rows[0]
+    commands = row[-1].splitlines()
+    assert "tmsh delete ltm node /Common/node-dead" not in commands
+    assert "tmsh delete ltm pool /Common/pool-dead" in commands
 
 
 def test_summary_contains_system_info_and_counts():
@@ -103,11 +148,16 @@ def test_write_xlsx(tmp_path):
             fills.add(cell.fill.fgColor.rgb)
     assert "00C6EFCE" in fills or "FFC6EFCE" in fills  # green for IN USE
 
+    dead_chains = workbook["Dead Chains"]
+    verdict_column = tables["dead_chains"].verdict_column + 1
+    cell = dead_chains.cell(row=2, column=verdict_column)
+    assert cell.fill.fgColor.rgb in ("00CCC0DA", "FFCCC0DA")  # purple for OFFLINE
+
 
 def test_write_csv(tmp_path):
     _, tables = make_tables()
     written = write_csv(tables, str(tmp_path))
-    assert len(written) == 7
+    assert len(written) == 8
 
     with open(tmp_path / "inventory.csv", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))

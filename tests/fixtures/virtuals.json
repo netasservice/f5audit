@@ -20,6 +20,15 @@
   },
   {
     "kind": "tm:ltm:virtual:virtualstate",
+    "name": "vs-dead",
+    "partition": "Common",
+    "fullPath": "/Common/vs-dead",
+    "destination": "/Common/192.0.2.13:443",
+    "pool": "/Common/pool-dead",
+    "enabled": true
+  },
+  {
+    "kind": "tm:ltm:virtual:virtualstate",
     "name": "vs-disabled",
     "partition": "Common",
     "fullPath": "/Common/vs-disabled",

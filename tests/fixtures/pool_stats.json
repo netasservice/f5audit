@@ -1,0 +1,22 @@
+{
+  "entries": {
+    "https://localhost/mgmt/tm/ltm/pool/~Common~pool-web/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/pool-web"},
+          "serverside.totConns": {"value": 450},
+          "status.availabilityState": {"description": "available"}
+        }
+      }
+    },
+    "https://localhost/mgmt/tm/ltm/pool/~Common~pool-dead/stats": {
+      "nestedStats": {
+        "entries": {
+          "tmName": {"description": "/Common/pool-dead"},
+          "serverside.totConns": {"value": 120},
+          "status.availabilityState": {"description": "offline"}
+        }
+      }
+    }
+  }
+}

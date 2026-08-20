@@ -85,7 +85,7 @@ f5audit analyze --host 192.0.2.1 --user auditor --insecure --save-raw ./raw/ --o
 | `--delay` | Seconds between requests (default 0.1) |
 | `--top` | Pagination page size (default 100) |
 | `--format xlsx\|csv` | Excel workbook or one CSV per sheet |
-| `--allow-standby` | On a standby unit, emit traffic verdicts marked `UNRELIABLE (standby)` instead of skipping them |
+| `--allow-standby` | On a standby unit, emit traffic- and availability-based verdicts marked `UNRELIABLE (standby)` instead of skipping them |
 
 Exit codes: `0` OK · `1` connection/auth error · `2` analysis completed
 with warnings (standby device, denied partitions, missing endpoints).
@@ -97,6 +97,7 @@ with warnings (standby device, denied partitions, missing endpoints).
 | `ORPHAN` | Not referenced by anything (node: no pool membership; pool: no VS/iRule/policy reference; monitor: no user). Only issued when the inventory is complete and no dynamic iRules are active. |
 | `MANUAL REVIEW` | A dynamic iRule (`pool $var`, `pool [...]`, datagroups) or a missing `ltm/rule` endpoint means the object *could* be referenced at runtime. Never auto-cleanup these. |
 | `INACTIVE` | Configured and referenced, but disabled or zero total connections since the last counter reset. |
+| `OFFLINE (decommission candidate)` | Referenced, but the whole dependency chain is monitor-offline: every member of the pool is down, so the pool and its virtual servers are offline. A deletion candidate to confirm with the config owner — availability is point-in-time, so it may also mean maintenance. A node is only included when it is dead in **every** pool it belongs to; a node alive in another pool stays `IN USE` ("in use elsewhere"). Only issued on the ACTIVE unit; capped at `MANUAL REVIEW` while dynamic iRules are attached. |
 | `UNRELIABLE (standby)` | Traffic-based verdict computed on a standby unit (only with `--allow-standby`). |
 | `UNRELIABLE (incomplete inventory)` | Some partitions were not readable; a reference could exist in an invisible partition. |
 | `IN USE` | Everything else. |
@@ -113,6 +114,10 @@ with warnings (standby device, denied partitions, missing endpoints).
   delete". Use the planned `compare` workflow (v2) — two collections some
   weeks apart — to distinguish real zero traffic from a recent reset.
   The raw cache already stores per-file timestamps to enable this.
+- Availability is **point-in-time**: an `OFFLINE` chain reflects monitor
+  state at collection time and may mean maintenance rather than
+  decommissioning. Always confirm with the config owner before requesting
+  deletion.
 
 ## Report sheets
 
@@ -122,13 +127,20 @@ with warnings (standby device, denied partitions, missing endpoints).
    nodes), fully correlated: node ↔ pool ↔ virtual server ↔ monitor ↔
    iRule/policy references, statuses, traffic and verdict.
 3. **Orphan Nodes** · 4. **Orphan-Inactive Pools** · 5. **Inactive
-   Virtual Servers** · 6. **Orphan Monitors** — filtered views with
-   informational `tmsh` commands for the change request.
-7. **Manual Review** — objects touched by dynamic logic, with the
+   Virtual Servers** — filtered views with informational `tmsh` commands
+   for the change request.
+6. **Dead Chains** — one row per pool with an
+   `OFFLINE (decommission candidate)` verdict, grouping the whole chain
+   (virtual servers → pool → member nodes) with per-object verdicts and
+   the informational `tmsh delete` lines to take to the config owner.
+   Nodes still alive in another pool get no delete line here.
+7. **Orphan Monitors** — filtered view with informational `tmsh`
+   commands.
+8. **Manual Review** — objects touched by dynamic logic, with the
    iRule/policy that causes the doubt.
 
 Color coding: red = ORPHAN · yellow = MANUAL REVIEW / UNRELIABLE ·
-orange = INACTIVE · green = IN USE.
+orange = INACTIVE · purple = OFFLINE · green = IN USE.
 
 ## Development
 

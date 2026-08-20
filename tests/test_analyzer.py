@@ -2,7 +2,7 @@
 
 from f5audit.analyzer import Analyzer, Verdict
 from f5audit.correlator import correlate
-from f5audit.models import IRule
+from f5audit.models import IRule, PoolMember
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
 
@@ -131,6 +131,145 @@ def test_virtual_without_pool_but_with_irules_is_manual_review():
 
     result = analyze(mutate=mutate)
     assert result.virtual_verdicts["/Common/vs-web"].verdict == Verdict.MANUAL_REVIEW
+
+
+# ---------------------------------------------------------------------------
+# Dead chains (OFFLINE decommission candidates)
+# ---------------------------------------------------------------------------
+
+
+def test_dead_chain_flags_virtual_pool_and_node_offline():
+    result = analyze()
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+    assert result.pool_verdicts["/Common/pool-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+    # Notes carry the evidence chain and the point-in-time caveat.
+    assert "/Common/pool-dead" in result.virtual_verdicts["/Common/vs-dead"].notes
+    assert "node-dead:443" in result.pool_verdicts["/Common/pool-dead"].notes
+    for verdicts, path in (
+        (result.virtual_verdicts, "/Common/vs-dead"),
+        (result.pool_verdicts, "/Common/pool-dead"),
+        (result.node_verdicts, "/Common/node-dead"),
+    ):
+        assert "point-in-time" in verdicts[path].notes
+
+
+def test_dead_chain_overrides_historical_traffic():
+    # vs-dead has 4321 total conns in the fixture: traffic alone would say
+    # IN USE, but the chain is offline now.
+    result = analyze()
+    verdict = result.virtual_verdicts["/Common/vs-dead"]
+    assert verdict.verdict == Verdict.OFFLINE_CANDIDATE
+
+
+def test_node_offline_but_alive_in_another_pool_is_in_use():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-web"].members.append(
+            PoolMember(
+                node_full_path="/Common/node-dead",
+                port="80",
+                partition="Common",
+                admin_state="monitor-enabled",
+                availability="available",
+            )
+        )
+
+    result = analyze(mutate=mutate)
+    node_verdict = result.node_verdicts["/Common/node-dead"]
+    assert node_verdict.verdict == Verdict.IN_USE
+    assert "in use elsewhere" in node_verdict.notes
+    # The pool and virtual server are still decommission candidates.
+    assert result.pool_verdicts["/Common/pool-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+
+
+def test_node_without_monitor_flagged_via_member_evidence():
+    def mutate(parsed):
+        parsed.nodes["/Common/node-dead"].availability = "unknown"
+
+    result = analyze(mutate=mutate)
+    verdict = result.node_verdicts["/Common/node-dead"]
+    assert verdict.verdict == Verdict.OFFLINE_CANDIDATE
+    assert "No node-level monitor result" in verdict.notes
+
+
+def test_node_without_monitor_and_live_membership_not_flagged():
+    def mutate(parsed):
+        parsed.nodes["/Common/node-dead"].availability = "unknown"
+        parsed.pools["/Common/pool-dead"].members[0].availability = "available"
+
+    result = analyze(mutate=mutate)
+    # The pool is no longer dead, so nothing in the chain is a candidate.
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.IN_USE
+    assert result.pool_verdicts["/Common/pool-dead"].verdict != Verdict.OFFLINE_CANDIDATE
+
+
+def test_pool_not_dead_when_availability_unknown():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-dead"].availability = "unknown"
+
+    result = analyze(mutate=mutate)
+    assert result.pool_verdicts["/Common/pool-dead"].verdict != Verdict.OFFLINE_CANDIDATE
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict != Verdict.OFFLINE_CANDIDATE
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.IN_USE
+
+
+def test_pool_not_dead_when_a_member_is_available():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-dead"].members[0].availability = "available"
+
+    result = analyze(mutate=mutate)
+    assert result.pool_verdicts["/Common/pool-dead"].verdict != Verdict.OFFLINE_CANDIDATE
+
+
+def test_pool_not_dead_without_pool_stats():
+    def mutate(parsed):
+        # Simulate a collection where ltm/pool/stats was not readable.
+        for pool in parsed.pools.values():
+            pool.availability = ""
+
+    result = analyze(mutate=mutate)
+    assert result.pool_verdicts["/Common/pool-dead"].verdict != Verdict.OFFLINE_CANDIDATE
+
+
+def test_dynamic_irules_cap_dead_pool_and_node_at_manual_review():
+    result = analyze(mutate=attach_dynamic_irule)
+    pool_verdict = result.pool_verdicts["/Common/pool-dead"]
+    assert pool_verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "Pool offline" in pool_verdict.notes
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.MANUAL_REVIEW
+    assert any(
+        item.object_type == "pool" and item.full_path == "/Common/pool-dead"
+        for item in result.manual_review
+    )
+    # The VS's own pool selection is static and provably dead: still OFFLINE.
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+
+
+def test_virtual_with_own_dynamic_irule_never_offline():
+    def mutate(parsed):
+        attach_dynamic_irule(parsed)
+        parsed.virtuals["/Common/vs-dead"].irules.append("/Common/irule-dyn")
+
+    result = analyze(mutate=mutate)
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict != Verdict.OFFLINE_CANDIDATE
+
+
+def test_standby_without_flag_skips_offline_verdicts():
+    result = analyze(standby=True)
+    all_verdicts = list(result.node_verdicts.values())
+    all_verdicts += list(result.pool_verdicts.values())
+    all_verdicts += list(result.virtual_verdicts.values())
+    assert all(v.verdict != Verdict.OFFLINE_CANDIDATE for v in all_verdicts)
+
+
+def test_standby_with_flag_marks_offline_verdicts_unreliable():
+    result = analyze(standby=True, allow_standby=True)
+    verdict = result.pool_verdicts["/Common/pool-dead"]
+    assert verdict.verdict == Verdict.UNRELIABLE_STANDBY
+    assert "standby" in verdict.notes
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.UNRELIABLE_STANDBY
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.UNRELIABLE_STANDBY
 
 
 # ---------------------------------------------------------------------------

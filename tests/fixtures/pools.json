@@ -24,6 +24,14 @@
   },
   {
     "kind": "tm:ltm:pool:poolstate",
+    "name": "pool-dead",
+    "partition": "Common",
+    "fullPath": "/Common/pool-dead",
+    "monitor": "/Common/mon-used ",
+    "loadBalancingMode": "round-robin"
+  },
+  {
+    "kind": "tm:ltm:pool:poolstate",
     "name": "pool-idle",
     "partition": "Common",
     "fullPath": "/Common/pool-idle",

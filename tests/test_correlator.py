@@ -56,9 +56,46 @@ def test_dynamic_irule_only_counts_when_attached_to_a_virtual():
     assert correlation.attached_dynamic_irules == ["/Common/irule-dyn"]
 
 
+def test_virtual_to_pools_includes_default_pool_and_irule_pools():
+    correlation = correlate(make_parsed())
+    # vs-web reaches pool-web (default) and pool-irule (static iRule).
+    assert correlation.virtual_to_pools["/Common/vs-web"] == {
+        "/Common/pool-web",
+        "/Common/pool-irule",
+    }
+    assert correlation.virtual_to_pools["/Common/vs-dead"] == {"/Common/pool-dead"}
+    assert correlation.virtuals_with_unprovable_pool_selection == set()
+
+
+def test_dynamic_irule_makes_virtual_pool_selection_unprovable():
+    parsed = make_parsed()
+    parsed.irules["/Common/irule-dyn"] = IRule(
+        full_path="/Common/irule-dyn",
+        partition="Common",
+        name="irule-dyn",
+        definition="pool $x",
+        has_dynamic_pool_selection=True,
+    )
+    parsed.virtuals["/Common/vs-dead"].irules.append("/Common/irule-dyn")
+    correlation = correlate(parsed)
+    assert "/Common/vs-dead" in correlation.virtuals_with_unprovable_pool_selection
+    assert "/Common/vs-web" not in correlation.virtuals_with_unprovable_pool_selection
+
+
+def test_unreadable_attached_irule_makes_virtual_pool_selection_unprovable():
+    parsed = make_parsed()
+    # Attached iRule missing from the parsed inventory (e.g. ltm/rule denied).
+    parsed.virtuals["/Common/vs-dead"].irules.append("/Common/irule-unknown")
+    correlation = correlate(parsed)
+    assert "/Common/vs-dead" in correlation.virtuals_with_unprovable_pool_selection
+
+
 def test_monitor_users_includes_pools_and_nodes():
     correlation = correlate(make_parsed())
-    assert correlation.monitor_users["/Common/mon-used"] == {"/Common/pool-web"}
+    assert correlation.monitor_users["/Common/mon-used"] == {
+        "/Common/pool-web",
+        "/Common/pool-dead",
+    }
     # node-orphan uses /Common/icmp as its node monitor.
     assert "/Common/node-orphan" in correlation.monitor_users["/Common/icmp"]
     assert "/Common/mon-orphan" not in correlation.monitor_users
