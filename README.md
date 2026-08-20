@@ -1,8 +1,8 @@
 # f5audit
 
 [![CI](https://github.com/netcraftworks/f5audit/actions/workflows/ci.yml/badge.svg)](https://github.com/netcraftworks/f5audit/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/f5audit)](https://pypi.org/project/f5audit/)
-[![Python](https://img.shields.io/pypi/pyversions/f5audit)](https://pypi.org/project/f5audit/)
+[![PyPI](https://img.shields.io/pypi/v/f5audit?label=pypi)](https://pypi.org/project/f5audit/)
+[![Python](https://img.shields.io/pypi/pyversions/f5audit?label=python)](https://pypi.org/project/f5audit/)
 
 Read-only audit tool for **F5 BIG-IP LTM**. It collects configuration and
 statistics via iControl REST (GET only), correlates object references, and
