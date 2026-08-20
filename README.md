@@ -1,5 +1,9 @@
 # f5audit
 
+[![CI](https://github.com/netcraftworks/f5audit/actions/workflows/ci.yml/badge.svg)](https://github.com/netcraftworks/f5audit/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/f5audit)](https://pypi.org/project/f5audit/)
+[![Python](https://img.shields.io/pypi/pyversions/f5audit)](https://pypi.org/project/f5audit/)
+
 Read-only audit tool for **F5 BIG-IP LTM**. It collects configuration and
 statistics via iControl REST (GET only), correlates object references, and
 produces a multi-sheet **Excel report** identifying unused objects (nodes,
@@ -35,10 +39,11 @@ the report are informational text only; nothing is ever executed.
 ## Installation
 
 ```
-pip install .
+pip install f5audit
 ```
 
-Or without installing, from the project directory: `python -m f5audit ...`
+From source: `pip install .` — or without installing, from the project
+directory: `python -m f5audit ...`
 
 ## Usage
 
@@ -129,10 +134,18 @@ orange = INACTIVE · green = IN USE.
 
 ```
 pip install -e ".[dev]"
+ruff check f5audit tests && ruff format --check f5audit tests
 pytest
 ```
 
 No test touches the network; everything runs from anonymized JSON
 fixtures and mocked HTTP sessions. Structural tests assert the client
 exposes no write verbs and that no forbidden endpoint appears in the
-source.
+source. CI runs lint plus the test suite on Python 3.9 through 3.14;
+all checks must pass before a PR can merge.
+
+Releases are published to PyPI automatically: bump `__version__` in
+`f5audit/__init__.py`, merge, and create a GitHub release tagged
+`v<version>`. The release workflow verifies the tag matches the package
+version, builds, and publishes via PyPI Trusted Publishing (no stored
+API tokens).

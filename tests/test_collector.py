@@ -50,10 +50,10 @@ def minimal_responses():
         "/mgmt/tm/ltm/virtual": [],
         "/mgmt/tm/ltm/rule": [],
         "/mgmt/tm/ltm/policy": [],
-        "/mgmt/tm/ltm/pool/~Common~pool-web/members":
-            load_fixture("pool_members_pool-web.json"),
-        "/mgmt/tm/ltm/pool/~Common~pool-web/members/stats":
-            load_fixture("pool_member_stats_pool-web.json"),
+        "/mgmt/tm/ltm/pool/~Common~pool-web/members": load_fixture("pool_members_pool-web.json"),
+        "/mgmt/tm/ltm/pool/~Common~pool-web/members/stats": load_fixture(
+            "pool_member_stats_pool-web.json"
+        ),
         "/mgmt/tm/ltm/monitor/http": load_fixture("monitors_http.json"),
         "/mgmt/tm/ltm/virtual/stats": {},
         "/mgmt/tm/ltm/pool/stats": {},
@@ -82,8 +82,10 @@ def test_collect_records_403_as_denied():
     data = collector.collect()
 
     denied = data.meta["denied"]
-    assert any(entry["endpoint"] == "/mgmt/tm/ltm/rule" and
-               entry["partition"] == "Common" for entry in denied)
+    assert any(
+        entry["endpoint"] == "/mgmt/tm/ltm/rule" and entry["partition"] == "Common"
+        for entry in denied
+    )
     assert data.meta["aborted"] is None
 
 
@@ -122,6 +124,7 @@ def test_raw_files_carry_timestamp(tmp_path):
     store = RawStore(str(tmp_path))
     store.save("sys_version", "/mgmt/tm/sys/version", {"x": 1})
     import json
+
     files = list(tmp_path.glob("*.json"))
     assert len(files) == 1
     payload = json.loads(files[0].read_text())

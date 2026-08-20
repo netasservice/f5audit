@@ -3,17 +3,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Set
 
 from .parsing import ParsedData, parse_monitor_refs
 
 # F5 factory monitors living in /Common. Objects using only these are
 # normal; the monitors themselves are never reported as orphans.
 BUILTIN_MONITOR_NAMES = {
-    "none", "http", "https", "https_443", "http_head_f5", "https_head_f5",
-    "tcp", "tcp_echo", "tcp_half_open", "udp", "icmp", "gateway_icmp",
-    "inband", "real_server", "snmp_dca", "snmp_dca_base", "external",
-    "ldap", "dns", "mysql", "sip",
+    "none",
+    "http",
+    "https",
+    "https_443",
+    "http_head_f5",
+    "https_head_f5",
+    "tcp",
+    "tcp_echo",
+    "tcp_half_open",
+    "udp",
+    "icmp",
+    "gateway_icmp",
+    "inband",
+    "real_server",
+    "snmp_dca",
+    "snmp_dca_base",
+    "external",
+    "ldap",
+    "dns",
+    "mysql",
+    "sip",
 }
 
 
@@ -24,28 +40,28 @@ def is_builtin_monitor(full_path: str) -> bool:
 
 @dataclass
 class Correlation:
-    node_to_pools: Dict[str, Set[str]] = field(default_factory=dict)
-    pool_to_virtuals: Dict[str, Set[str]] = field(default_factory=dict)
-    pool_to_irules: Dict[str, Set[str]] = field(default_factory=dict)
-    pool_to_policies: Dict[str, Set[str]] = field(default_factory=dict)
-    monitor_users: Dict[str, Set[str]] = field(default_factory=dict)
+    node_to_pools: dict[str, set[str]] = field(default_factory=dict)
+    pool_to_virtuals: dict[str, set[str]] = field(default_factory=dict)
+    pool_to_irules: dict[str, set[str]] = field(default_factory=dict)
+    pool_to_policies: dict[str, set[str]] = field(default_factory=dict)
+    monitor_users: dict[str, set[str]] = field(default_factory=dict)
     # Dynamic iRules that are actually attached to at least one virtual
     # server. While one exists, no pool can safely be called an orphan.
-    attached_dynamic_irules: List[str] = field(default_factory=list)
+    attached_dynamic_irules: list[str] = field(default_factory=list)
 
     @property
     def has_attached_dynamic_irules(self) -> bool:
         return bool(self.attached_dynamic_irules)
 
-    def pool_static_references(self, pool_path: str) -> Set[str]:
-        refs: Set[str] = set()
+    def pool_static_references(self, pool_path: str) -> set[str]:
+        refs: set[str] = set()
         refs |= self.pool_to_virtuals.get(pool_path, set())
         refs |= self.pool_to_irules.get(pool_path, set())
         refs |= self.pool_to_policies.get(pool_path, set())
         return refs
 
 
-def _add(index: Dict[str, Set[str]], key: str, value: str) -> None:
+def _add(index: dict[str, set[str]], key: str, value: str) -> None:
     index.setdefault(key, set()).add(value)
 
 
@@ -73,7 +89,7 @@ def correlate(parsed: ParsedData) -> Correlation:
             _add(correlation.pool_to_policies, pool_ref, policy.full_path)
 
     # 5. Dynamic iRules attached to virtual servers.
-    attached: Set[str] = set()
+    attached: set[str] = set()
     for virtual in parsed.virtuals.values():
         for irule_path in virtual.irules:
             irule = parsed.irules.get(irule_path)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -73,7 +73,7 @@ class F5ReadOnlyClient:
         self._timeout = timeout
         self._delay = delay
         self.page_size = page_size
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._auth_mode = "token"  # or "basic" after 404 fallback
         self._session = requests.Session()
         self._session.verify = verify_tls
@@ -132,9 +132,7 @@ class F5ReadOnlyClient:
                 "role still needs REST access granted)."
             )
         else:
-            raise F5AuthError(
-                f"Unexpected status {response.status_code} from login endpoint."
-            )
+            raise F5AuthError(f"Unexpected status {response.status_code} from login endpoint.")
 
     def _ensure_authenticated(self) -> None:
         if self._auth_mode == "token" and self._token is None:
@@ -144,7 +142,7 @@ class F5ReadOnlyClient:
     # Read-only requests
     # ------------------------------------------------------------------
 
-    def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """GET a single resource and return the parsed JSON body.
 
         Retries up to MAX_RETRIES times with exponential backoff on
@@ -162,26 +160,25 @@ class F5ReadOnlyClient:
                 response = self._session.get(url, params=params, timeout=self._timeout)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
                 if attempt < MAX_RETRIES:
-                    wait = BACKOFF_BASE_SECONDS * (2 ** attempt)
+                    wait = BACKOFF_BASE_SECONDS * (2**attempt)
                     logger.warning(
                         "GET %s failed (%s), retrying in %.1fs",
-                        path, exc.__class__.__name__, wait,
+                        path,
+                        exc.__class__.__name__,
+                        wait,
                     )
                     time.sleep(wait)
                     attempt += 1
                     continue
                 raise F5ClientError(
-                    f"GET {path} failed after {MAX_RETRIES + 1} attempts: "
-                    f"{exc.__class__.__name__}"
+                    f"GET {path} failed after {MAX_RETRIES + 1} attempts: {exc.__class__.__name__}"
                 ) from exc
 
             if response.status_code == 200:
                 try:
                     return response.json()
                 except ValueError as exc:
-                    raise F5APIError(
-                        200, path, f"Malformed JSON in response from {path}"
-                    ) from exc
+                    raise F5APIError(200, path, f"Malformed JSON in response from {path}") from exc
 
             if response.status_code == 401 and self._auth_mode == "token" and not relogin_done:
                 # Token likely expired mid-collection: one transparent re-login.
@@ -192,10 +189,12 @@ class F5ReadOnlyClient:
                 continue
 
             if response.status_code >= 500 and attempt < MAX_RETRIES:
-                wait = BACKOFF_BASE_SECONDS * (2 ** attempt)
+                wait = BACKOFF_BASE_SECONDS * (2**attempt)
                 logger.warning(
                     "GET %s returned %d, retrying in %.1fs",
-                    path, response.status_code, wait,
+                    path,
+                    response.status_code,
+                    wait,
                 )
                 time.sleep(wait)
                 attempt += 1
@@ -204,10 +203,10 @@ class F5ReadOnlyClient:
             raise F5APIError(response.status_code, path)
 
     def get_collection(
-        self, path: str, params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, path: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """GET a collection with $top/$skip pagination; returns merged items."""
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         skip = 0
         while True:
             page_params = dict(params or {})

@@ -9,11 +9,18 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .collector import CollectionData
 from .models import (
-    IRule, Monitor, Node, Policy, Pool, PoolMember, SystemInfo, VirtualServer,
+    IRule,
+    Monitor,
+    Node,
+    Policy,
+    Pool,
+    PoolMember,
+    SystemInfo,
+    VirtualServer,
 )
 
 logger = logging.getLogger("f5audit.parsing")
@@ -36,7 +43,7 @@ _MONITOR_TOKEN_SPLIT_RE = re.compile(r"[\s{}]+")
 _MONITOR_KEYWORDS = {"and", "min", "of", "none", "default", ""}
 
 
-def normalize_ref(name: Optional[str], default_partition: str) -> str:
+def normalize_ref(name: str | None, default_partition: str) -> str:
     """Normalize an object reference to the full '/Partition/name' form."""
     if not name:
         return ""
@@ -48,7 +55,7 @@ def normalize_ref(name: Optional[str], default_partition: str) -> str:
     return f"/{default_partition}/{name}"
 
 
-def split_member_name(member_name: str) -> Tuple[str, str]:
+def split_member_name(member_name: str) -> tuple[str, str]:
     """Split a pool member name ('node:port', IPv6 uses 'addr.port')."""
     if member_name.count(":") > 1:
         # IPv6 address: the port separator is a dot.
@@ -62,7 +69,7 @@ def split_member_name(member_name: str) -> Tuple[str, str]:
     return member_name, ""
 
 
-def parse_monitor_refs(value: Optional[str], default_partition: str) -> List[str]:
+def parse_monitor_refs(value: str | None, default_partition: str) -> list[str]:
     """Extract normalized monitor full paths from a raw monitor string."""
     if not value:
         return []
@@ -74,14 +81,14 @@ def parse_monitor_refs(value: Optional[str], default_partition: str) -> List[str
     return refs
 
 
-def analyze_irule_tcl(definition: str, partition: str) -> Tuple[List[str], bool]:
+def analyze_irule_tcl(definition: str, partition: str) -> tuple[list[str], bool]:
     """Return (static_pool_refs, has_dynamic_pool_selection) for Tcl code.
 
     Commented lines are ignored. A 'class match' (datagroup lookup)
     combined with any pool command is treated as dynamic, since the
     selected pool cannot be resolved statically.
     """
-    static_refs: List[str] = []
+    static_refs: list[str] = []
     dynamic = False
     saw_class_match = False
     saw_pool_keyword = False
@@ -105,7 +112,8 @@ def analyze_irule_tcl(definition: str, partition: str) -> Tuple[List[str], bool]
 
 # --- Stats flattening -----------------------------------------------------
 
-def stat_value(entries: Dict[str, Any], key: str, default: Any = None) -> Any:
+
+def stat_value(entries: dict[str, Any], key: str, default: Any = None) -> Any:
     entry = entries.get(key)
     if not isinstance(entry, dict):
         return default
@@ -114,9 +122,9 @@ def stat_value(entries: Dict[str, Any], key: str, default: Any = None) -> Any:
     return entry.get("description", default)
 
 
-def flatten_stats(raw: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def flatten_stats(raw: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     """Map an F5 stats document to {object_full_path: stat_entries}."""
-    result: Dict[str, Dict[str, Any]] = {}
+    result: dict[str, dict[str, Any]] = {}
     for url, wrapper in ((raw or {}).get("entries") or {}).items():
         entries = (wrapper.get("nestedStats") or {}).get("entries") or {}
         full_path = stat_value(entries, "tmName")
@@ -130,15 +138,16 @@ def flatten_stats(raw: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
 
 # --- Parsed aggregate -----------------------------------------------------
 
+
 @dataclass
 class ParsedData:
     system: SystemInfo = field(default_factory=SystemInfo)
-    nodes: Dict[str, Node] = field(default_factory=dict)
-    pools: Dict[str, Pool] = field(default_factory=dict)
-    virtuals: Dict[str, VirtualServer] = field(default_factory=dict)
-    irules: Dict[str, IRule] = field(default_factory=dict)
-    policies: Dict[str, Policy] = field(default_factory=dict)
-    monitors: Dict[str, Monitor] = field(default_factory=dict)
+    nodes: dict[str, Node] = field(default_factory=dict)
+    pools: dict[str, Pool] = field(default_factory=dict)
+    virtuals: dict[str, VirtualServer] = field(default_factory=dict)
+    irules: dict[str, IRule] = field(default_factory=dict)
+    policies: dict[str, Policy] = field(default_factory=dict)
+    monitors: dict[str, Monitor] = field(default_factory=dict)
 
 
 def _iter_partition_items(data: CollectionData, prefix: str):
@@ -148,7 +157,7 @@ def _iter_partition_items(data: CollectionData, prefix: str):
             yield partition, item
 
 
-def _full_path(item: Dict[str, Any], partition: str) -> str:
+def _full_path(item: dict[str, Any], partition: str) -> str:
     return item.get("fullPath") or f"/{item.get('partition', partition)}/{item.get('name', '')}"
 
 
@@ -237,8 +246,9 @@ def _parse_nodes(data: CollectionData, parsed: ParsedData) -> None:
         parsed.nodes[full_path] = node
 
 
-def _parse_pool_member(item: Dict[str, Any], pool_partition: str,
-                       member_stats: Dict[str, Dict[str, Any]]) -> PoolMember:
+def _parse_pool_member(
+    item: dict[str, Any], pool_partition: str, member_stats: dict[str, dict[str, Any]]
+) -> PoolMember:
     partition = item.get("partition", pool_partition)
     node_name, port = split_member_name(item.get("name", ""))
     node_full_path = normalize_ref(node_name, partition)
@@ -279,9 +289,7 @@ def _parse_pools(data: CollectionData, parsed: ParsedData) -> None:
             pool.total_conns = stat_value(entries, "serverside.totConns")
         member_stats = flatten_stats(data.get(f"ltm_pool_member_stats@{full_path}"))
         for member_item in data.get(f"ltm_pool_members@{full_path}") or []:
-            pool.members.append(
-                _parse_pool_member(member_item, pool.partition, member_stats)
-            )
+            pool.members.append(_parse_pool_member(member_item, pool.partition, member_stats))
         parsed.pools[full_path] = pool
 
 
@@ -365,7 +373,7 @@ def _parse_policies(data: CollectionData, parsed: ParsedData) -> None:
 
 def _parse_monitors(data: CollectionData, parsed: ParsedData) -> None:
     for key in data.keys_with_prefix("ltm_monitor_"):
-        type_and_partition = key[len("ltm_monitor_"):]
+        type_and_partition = key[len("ltm_monitor_") :]
         monitor_type, _, partition = type_and_partition.partition("@")
         for item in data.get(key) or []:
             full_path = _full_path(item, partition)

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check f5audit tests
+      - name: Check formatting
+        run: ruff format --check f5audit tests
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+      - name: Run tests
+        run: pytest
+
+  # The read-only guarantee is already covered by the structural tests in
+  # tests/test_client.py; this job makes it a named, required check so a
+  # regression is visible at a glance in the PR.
+  read-only-guarantee:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+      - name: Structural read-only tests
+        run: pytest tests/test_client.py -k "write or util or login" -v

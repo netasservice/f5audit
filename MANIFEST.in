@@ -1,0 +1,2 @@
+# Ship a complete, runnable test suite in the sdist (fixtures included).
+recursive-include tests *.py *.json

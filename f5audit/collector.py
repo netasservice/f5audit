@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .client import F5APIError, F5ClientError, F5ReadOnlyClient
 
@@ -23,8 +23,18 @@ logger = logging.getLogger("f5audit.collector")
 # Monitor types to enumerate; 404 on a type means it is not provisioned
 # on that BIG-IP and is silently skipped.
 MONITOR_TYPES = [
-    "http", "https", "tcp", "tcp-half-open", "udp", "icmp",
-    "gateway-icmp", "external", "ldap", "dns", "mysql", "sip",
+    "http",
+    "https",
+    "tcp",
+    "tcp-half-open",
+    "udp",
+    "icmp",
+    "gateway-icmp",
+    "external",
+    "ldap",
+    "dns",
+    "mysql",
+    "sip",
 ]
 
 META_KEY = "_meta"
@@ -41,13 +51,13 @@ def encode_path_component(full_path: str) -> str:
 class CollectionData:
     """All raw JSON datasets plus collection metadata."""
 
-    datasets: Dict[str, Any] = field(default_factory=dict)
-    meta: Dict[str, Any] = field(default_factory=dict)
+    datasets: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.datasets.get(key, default)
 
-    def keys_with_prefix(self, prefix: str) -> List[str]:
+    def keys_with_prefix(self, prefix: str) -> list[str]:
         return sorted(k for k in self.datasets if k.startswith(prefix))
 
 
@@ -71,7 +81,7 @@ class RawStore:
         with open(self._filename(key), "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=1)
 
-    def save_meta(self, meta: Dict[str, Any]) -> None:
+    def save_meta(self, meta: dict[str, Any]) -> None:
         with open(self._filename(META_KEY), "w", encoding="utf-8") as handle:
             json.dump(meta, handle, indent=1)
 
@@ -85,7 +95,7 @@ class RawStore:
             )
         for path in files:
             try:
-                with open(path, "r", encoding="utf-8") as handle:
+                with open(path, encoding="utf-8") as handle:
                     payload = json.load(handle)
             except (ValueError, OSError) as exc:
                 raise F5ClientError(f"Could not read raw file {path}: {exc}") from exc
@@ -99,14 +109,14 @@ class RawStore:
 class Collector:
     """Runs the full read-only collection against a BIG-IP."""
 
-    def __init__(self, client: F5ReadOnlyClient, raw_store: Optional[RawStore] = None):
+    def __init__(self, client: F5ReadOnlyClient, raw_store: RawStore | None = None):
         self.client = client
         self.raw_store = raw_store
         self.data = CollectionData()
         self.data.meta = {
             "collected_at": datetime.now(timezone.utc).isoformat(),
             "host": getattr(client, "_host", ""),
-            "denied": [],            # [{"partition": ..., "endpoint": ...}]
+            "denied": [],  # [{"partition": ..., "endpoint": ...}]
             "missing_endpoints": [],  # ["ltm/virtual/stats", ...]
             "aborted": None,
         }
@@ -124,10 +134,10 @@ class Collector:
         api_path: str,
         *,
         collection: bool = True,
-        params: Optional[Dict[str, Any]] = None,
-        partition: Optional[str] = None,
+        params: dict[str, Any] | None = None,
+        partition: str | None = None,
         tolerate_404: bool = False,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Fetch one dataset, recording 403/404 instead of failing.
 
         403 -> recorded (denied partition or missing endpoint), returns None.
@@ -142,9 +152,7 @@ class Collector:
         except F5APIError as exc:
             if exc.status_code == 403:
                 logger.warning("Access denied (403) on %s", api_path)
-                self.data.meta["denied"].append(
-                    {"partition": partition, "endpoint": api_path}
-                )
+                self.data.meta["denied"].append({"partition": partition, "endpoint": api_path})
                 return None
             if exc.status_code == 404:
                 if not tolerate_404:
@@ -175,7 +183,8 @@ class Collector:
             self.data.meta["aborted"] = str(exc)
             logger.error(
                 "Collection aborted: %s. Datasets gathered so far: %d",
-                exc, len(self.data.datasets),
+                exc,
+                len(self.data.datasets),
             )
         finally:
             if self.raw_store:
@@ -189,7 +198,7 @@ class Collector:
         self._fetch("sys_clock", "/mgmt/tm/sys/clock", collection=False)
         self._fetch("cm_device", "/mgmt/tm/cm/device")
 
-    def _collect_partitions(self) -> List[str]:
+    def _collect_partitions(self) -> list[str]:
         items = self._fetch("auth_partition", "/mgmt/tm/auth/partition")
         if not items:
             logger.warning("Could not enumerate partitions; assuming only Common.")
@@ -207,11 +216,13 @@ class Collector:
             ("ltm_policy", "/mgmt/tm/ltm/policy"),
         ):
             self._fetch(
-                f"{short}@{partition}", api_path,
-                params=dict(params), partition=partition,
+                f"{short}@{partition}",
+                api_path,
+                params=dict(params),
+                partition=partition,
             )
 
-    def _iter_object_paths(self, prefix: str) -> List[str]:
+    def _iter_object_paths(self, prefix: str) -> list[str]:
         paths = []
         for key in self.data.keys_with_prefix(prefix + "@"):
             for item in self.data.datasets.get(key) or []:
@@ -261,7 +272,7 @@ class Collector:
                 tolerate_404=True,
             )
 
-    def _collect_monitors(self, partitions: List[str]) -> None:
+    def _collect_monitors(self, partitions: list[str]) -> None:
         logger.info("Collecting monitors...")
         for monitor_type in MONITOR_TYPES:
             for partition in partitions:
@@ -277,9 +288,7 @@ class Collector:
                     break
 
     def _monitor_type_missing(self, monitor_type: str) -> bool:
-        return not any(
-            key.startswith(f"ltm_monitor_{monitor_type}@") for key in self.data.datasets
-        )
+        return not any(key.startswith(f"ltm_monitor_{monitor_type}@") for key in self.data.datasets)
 
     def _collect_stats(self) -> None:
         logger.info("Collecting statistics...")

@@ -11,12 +11,13 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def load_fixture(name):
-    with open(FIXTURES_DIR / name, "r", encoding="utf-8") as handle:
+    with open(FIXTURES_DIR / name, encoding="utf-8") as handle:
         return json.load(handle)
 
 
-def build_collection(*, standby: bool = False,
-                     denied=None, missing_endpoints=None) -> CollectionData:
+def build_collection(
+    *, standby: bool = False, denied=None, missing_endpoints=None
+) -> CollectionData:
     """Assemble a CollectionData equivalent to a full live collection."""
     data = CollectionData()
     data.meta = {

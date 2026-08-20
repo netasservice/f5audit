@@ -68,14 +68,27 @@ document that will drift.
 
 ## Git workflow
 
-This directory is not yet a git repository. When it is initialized, the first commit
-includes this file, and from then on:
+The repository lives at `netcraftworks/f5audit` on GitHub.
 
 - One branch per change, named `feat/<short-description>` or `fix/<short-description>`.
 - Every change lands via a pull request into `main`. Never commit directly to `main`.
+- `main` is protected: no direct pushes, PRs require the CI checks to pass before merge.
 - Keep PRs scoped to one issue. A PR that touches any invariant in the two sections
   above says so explicitly in its description, and explains why the invariant still
   holds.
+
+## Releases
+
+The package is published to PyPI as `f5audit` via the `release.yml` workflow, which
+uses PyPI Trusted Publishing (OIDC) — there is no stored API token to leak or rotate.
+
+To cut a release:
+
+1. Bump `__version__` in `f5audit/__init__.py` (the single source of version truth;
+   `pyproject.toml` reads it dynamically). Land the bump through a normal PR.
+2. Create a GitHub release with tag `v<version>` (e.g. `v0.1.0`) on `main`.
+3. The workflow runs the tests, verifies the tag matches `__version__`, builds the
+   sdist and wheel, and publishes. A tag/version mismatch fails the build on purpose.
 
 ## English-only rule
 
@@ -135,8 +148,9 @@ cannot do the job.
 ### Daily practices
 
 - Descriptive naming: clear, unambiguous identifiers — no single-letter variables.
-- PEP 8 formatting throughout. There is no CI yet, so this is enforced by review; if a
-  formatter is added later it is `ruff format`.
+- PEP 8 formatting throughout, enforced by `ruff check` and `ruff format --check` in CI.
+  The ruff configuration lives in `pyproject.toml` and is the only one that counts —
+  do not rely on user-global ruff settings.
 - Comments explain *why*, not *what*. If removing a comment wouldn't confuse a future
   reader, don't write it. The comments that earn their place in this codebase are the
   ones recording a safety constraint or an F5 quirk (IPv6 member ports use `.`, monitor
@@ -157,8 +171,9 @@ cannot do the job.
 - **No test may touch the network.** Everything runs from anonymized JSON fixtures in
   `tests/fixtures/` and mocked `requests` sessions. A test that needs a live BIG-IP is
   not a test.
-- Run the suite with `pytest` before every commit. New logic ships with tests in the
-  same change.
+- Every PR keeps CI green: `ruff check`, `ruff format --check`, and `pytest` across
+  Python 3.9–3.14 (`.github/workflows/ci.yml`). Run `pytest` and `ruff check` locally
+  before pushing. New logic ships with tests in the same change.
 - The highest-value, most test-critical code is the iRule Tcl analysis in `parsing.py`
   and the verdict rules in `analyzer.py`. Every verdict rule has both a positive and a
   negative case. Every new iRule pattern (static, implicit partition, `$variable`,

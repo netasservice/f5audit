@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -22,12 +21,12 @@ from .correlator import Correlation
 from .parsing import ParsedData
 
 VERDICT_FILLS = {
-    Verdict.ORPHAN: "FFC7CE",              # red
-    Verdict.MANUAL_REVIEW: "FFEB9C",       # yellow
+    Verdict.ORPHAN: "FFC7CE",  # red
+    Verdict.MANUAL_REVIEW: "FFEB9C",  # yellow
     Verdict.UNRELIABLE_STANDBY: "FFEB9C",  # yellow
     Verdict.UNRELIABLE_INVENTORY: "FFEB9C",
-    Verdict.INACTIVE: "FCD5B4",            # orange
-    Verdict.IN_USE: "C6EFCE",              # green
+    Verdict.INACTIVE: "FCD5B4",  # orange
+    Verdict.IN_USE: "C6EFCE",  # green
 }
 
 HEADER_FILL = "D9D9D9"
@@ -37,9 +36,9 @@ MAX_COLUMN_WIDTH = 60
 @dataclass
 class ReportTable:
     title: str
-    headers: List[str]
-    rows: List[List[object]] = field(default_factory=list)
-    verdict_column: Optional[int] = None  # 0-based index into headers
+    headers: list[str]
+    rows: list[list[object]] = field(default_factory=list)
+    verdict_column: int | None = None  # 0-based index into headers
 
 
 def default_report_name(hostname: str, fmt: str = "xlsx") -> str:
@@ -53,12 +52,14 @@ def default_report_name(hostname: str, fmt: str = "xlsx") -> str:
 # Table construction
 # ---------------------------------------------------------------------------
 
+
 def _join(values) -> str:
     return ", ".join(sorted(values)) if values else ""
 
 
-def build_tables(parsed: ParsedData, correlation: Correlation,
-                 analysis: AnalysisResult) -> Dict[str, ReportTable]:
+def build_tables(
+    parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
+) -> dict[str, ReportTable]:
     return {
         "summary": _build_summary(parsed, analysis),
         "inventory": _build_inventory(parsed, correlation, analysis),
@@ -118,17 +119,30 @@ def _vs_summary(parsed: ParsedData, vs_paths) -> tuple:
         states.append(f"{virtual.admin_state}/{virtual.availability or '?'}")
         if virtual.total_conns is not None:
             conns.append(str(virtual.total_conns))
-    return (", ".join(names), ", ".join(destinations),
-            ", ".join(states), ", ".join(conns))
+    return (", ".join(names), ", ".join(destinations), ", ".join(states), ", ".join(conns))
 
 
-def _build_inventory(parsed: ParsedData, correlation: Correlation,
-                     analysis: AnalysisResult) -> ReportTable:
+def _build_inventory(
+    parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
+) -> ReportTable:
     headers = [
-        "Node", "IP", "Partition", "Node status", "Pool", "Port",
-        "Member status", "Effective monitor", "LB method",
-        "Virtual servers", "VIP:Port", "VS status", "VS total conns",
-        "iRule refs", "Policy refs", "Verdict", "Notes",
+        "Node",
+        "IP",
+        "Partition",
+        "Node status",
+        "Pool",
+        "Port",
+        "Member status",
+        "Effective monitor",
+        "LB method",
+        "Virtual servers",
+        "VIP:Port",
+        "VS status",
+        "VS total conns",
+        "iRule refs",
+        "Policy refs",
+        "Verdict",
+        "Notes",
     ]
     table = ReportTable("Inventory", headers, verdict_column=15)
 
@@ -145,110 +159,186 @@ def _build_inventory(parsed: ParsedData, correlation: Correlation,
             if member:
                 nodes_in_pools.add(member.node_full_path)
             monitor = _join(pool.monitors) or (node.monitor if node else "")
-            table.rows.append([
-                member.node_full_path if member else "(no members)",
-                node.address if node else "",
-                pool.partition,
-                f"{node.admin_state}/{node.availability or '?'}" if node else "",
-                pool_path,
-                member.port if member else "",
-                f"{member.admin_state}/{member.availability or '?'}" if member else "",
-                monitor,
-                pool.lb_method,
-                vs_names, vips, vs_states, vs_conns,
-                irule_refs, policy_refs,
-                verdict.verdict if verdict else "",
-                verdict.notes if verdict else "",
-            ])
+            table.rows.append(
+                [
+                    member.node_full_path if member else "(no members)",
+                    node.address if node else "",
+                    pool.partition,
+                    f"{node.admin_state}/{node.availability or '?'}" if node else "",
+                    pool_path,
+                    member.port if member else "",
+                    f"{member.admin_state}/{member.availability or '?'}" if member else "",
+                    monitor,
+                    pool.lb_method,
+                    vs_names,
+                    vips,
+                    vs_states,
+                    vs_conns,
+                    irule_refs,
+                    policy_refs,
+                    verdict.verdict if verdict else "",
+                    verdict.notes if verdict else "",
+                ]
+            )
 
     # Nodes that belong to no pool get their own rows.
     for node_path, node in sorted(parsed.nodes.items()):
         if node_path in nodes_in_pools:
             continue
         verdict = analysis.node_verdicts.get(node_path)
-        table.rows.append([
-            node_path, node.address, node.partition,
-            f"{node.admin_state}/{node.availability or '?'}",
-            "", "", "", node.monitor, "", "", "", "", "", "", "",
-            verdict.verdict if verdict else "",
-            verdict.notes if verdict else "",
-        ])
+        table.rows.append(
+            [
+                node_path,
+                node.address,
+                node.partition,
+                f"{node.admin_state}/{node.availability or '?'}",
+                "",
+                "",
+                "",
+                node.monitor,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                verdict.verdict if verdict else "",
+                verdict.notes if verdict else "",
+            ]
+        )
     return table
 
 
 def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
-    headers = ["Node", "IP", "Partition", "Monitor", "Verdict", "Notes",
-               "Suggested command (informational)"]
+    headers = [
+        "Node",
+        "IP",
+        "Partition",
+        "Monitor",
+        "Verdict",
+        "Notes",
+        "Suggested command (informational)",
+    ]
     table = ReportTable("Orphan Nodes", headers, verdict_column=4)
     for path, verdict in sorted(analysis.node_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
         node = parsed.nodes[path]
-        table.rows.append([
-            path, node.address, node.partition, node.monitor,
-            verdict.verdict, verdict.notes,
-            f"tmsh delete ltm node {path}"
-            if verdict.verdict == Verdict.ORPHAN else "",
-        ])
+        table.rows.append(
+            [
+                path,
+                node.address,
+                node.partition,
+                node.monitor,
+                verdict.verdict,
+                verdict.notes,
+                f"tmsh delete ltm node {path}" if verdict.verdict == Verdict.ORPHAN else "",
+            ]
+        )
     return table
 
 
-def _build_pools(parsed: ParsedData, correlation: Correlation,
-                 analysis: AnalysisResult) -> ReportTable:
-    headers = ["Pool", "Partition", "LB method", "Members", "Monitors",
-               "Virtual servers", "iRule refs", "Policy refs",
-               "Verdict", "Notes", "Suggested command (informational)"]
+def _build_pools(
+    parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
+) -> ReportTable:
+    headers = [
+        "Pool",
+        "Partition",
+        "LB method",
+        "Members",
+        "Monitors",
+        "Virtual servers",
+        "iRule refs",
+        "Policy refs",
+        "Verdict",
+        "Notes",
+        "Suggested command (informational)",
+    ]
     table = ReportTable("Orphan-Inactive Pools", headers, verdict_column=8)
     for path, verdict in sorted(analysis.pool_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
         pool = parsed.pools[path]
-        table.rows.append([
-            path, pool.partition, pool.lb_method,
-            ", ".join(f"{m.node_full_path}:{m.port}" for m in pool.members),
-            _join(pool.monitors),
-            _join(correlation.pool_to_virtuals.get(path, set())),
-            _join(correlation.pool_to_irules.get(path, set())),
-            _join(correlation.pool_to_policies.get(path, set())),
-            verdict.verdict, verdict.notes,
-            f"tmsh delete ltm pool {path}"
-            if verdict.verdict == Verdict.ORPHAN else "",
-        ])
+        table.rows.append(
+            [
+                path,
+                pool.partition,
+                pool.lb_method,
+                ", ".join(f"{m.node_full_path}:{m.port}" for m in pool.members),
+                _join(pool.monitors),
+                _join(correlation.pool_to_virtuals.get(path, set())),
+                _join(correlation.pool_to_irules.get(path, set())),
+                _join(correlation.pool_to_policies.get(path, set())),
+                verdict.verdict,
+                verdict.notes,
+                f"tmsh delete ltm pool {path}" if verdict.verdict == Verdict.ORPHAN else "",
+            ]
+        )
     return table
 
 
 def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
-    headers = ["Virtual server", "VIP:Port", "Default pool", "State",
-               "Availability", "Total conns", "Bits in", "Bits out",
-               "Verdict", "Notes"]
+    headers = [
+        "Virtual server",
+        "VIP:Port",
+        "Default pool",
+        "State",
+        "Availability",
+        "Total conns",
+        "Bits in",
+        "Bits out",
+        "Verdict",
+        "Notes",
+    ]
     table = ReportTable("Inactive Virtual Servers", headers, verdict_column=8)
     for path, verdict in sorted(analysis.virtual_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
         virtual = parsed.virtuals[path]
-        table.rows.append([
-            path, virtual.destination, virtual.default_pool,
-            virtual.admin_state, virtual.availability,
-            virtual.total_conns, virtual.bits_in, virtual.bits_out,
-            verdict.verdict, verdict.notes,
-        ])
+        table.rows.append(
+            [
+                path,
+                virtual.destination,
+                virtual.default_pool,
+                virtual.admin_state,
+                virtual.availability,
+                virtual.total_conns,
+                virtual.bits_in,
+                virtual.bits_out,
+                verdict.verdict,
+                verdict.notes,
+            ]
+        )
     return table
 
 
 def _build_orphan_monitors(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
-    headers = ["Monitor", "Type", "Partition", "Verdict", "Notes",
-               "Suggested command (informational)"]
+    headers = [
+        "Monitor",
+        "Type",
+        "Partition",
+        "Verdict",
+        "Notes",
+        "Suggested command (informational)",
+    ]
     table = ReportTable("Orphan Monitors", headers, verdict_column=3)
     for path, verdict in sorted(analysis.monitor_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
         monitor = parsed.monitors[path]
-        table.rows.append([
-            path, monitor.type, monitor.partition,
-            verdict.verdict, verdict.notes,
-            f"tmsh delete ltm monitor {monitor.type} {path}"
-            if verdict.verdict == Verdict.ORPHAN else "",
-        ])
+        table.rows.append(
+            [
+                path,
+                monitor.type,
+                monitor.partition,
+                verdict.verdict,
+                verdict.notes,
+                f"tmsh delete ltm monitor {monitor.type} {path}"
+                if verdict.verdict == Verdict.ORPHAN
+                else "",
+            ]
+        )
     return table
 
 
@@ -256,8 +346,7 @@ def _build_manual_review(analysis: AnalysisResult) -> ReportTable:
     headers = ["Object type", "Object", "Reason", "Caused by"]
     table = ReportTable("Manual Review", headers)
     for item in analysis.manual_review:
-        table.rows.append([item.object_type, item.full_path,
-                           item.reason, item.caused_by])
+        table.rows.append([item.object_type, item.full_path, item.reason, item.caused_by])
     return table
 
 
@@ -265,7 +354,8 @@ def _build_manual_review(analysis: AnalysisResult) -> ReportTable:
 # Writers
 # ---------------------------------------------------------------------------
 
-def write_xlsx(tables: Dict[str, ReportTable], out_path: str) -> None:
+
+def write_xlsx(tables: dict[str, ReportTable], out_path: str) -> None:
     workbook = Workbook()
     workbook.remove(workbook.active)
     header_font = Font(bold=True)
@@ -284,8 +374,7 @@ def write_xlsx(tables: Dict[str, ReportTable], out_path: str) -> None:
                 verdict = row[table.verdict_column]
                 color = VERDICT_FILLS.get(str(verdict))
                 if color:
-                    cell = sheet.cell(row=sheet.max_row,
-                                      column=table.verdict_column + 1)
+                    cell = sheet.cell(row=sheet.max_row, column=table.verdict_column + 1)
                     cell.fill = PatternFill("solid", fgColor=color)
         sheet.freeze_panes = "A2"
         last_column = get_column_letter(len(table.headers))
@@ -301,12 +390,10 @@ def _autofit_columns(sheet, table: ReportTable) -> None:
             value = row[index - 1]
             if value is not None:
                 width = max(width, len(str(value)))
-        sheet.column_dimensions[get_column_letter(index)].width = min(
-            width + 2, MAX_COLUMN_WIDTH
-        )
+        sheet.column_dimensions[get_column_letter(index)].width = min(width + 2, MAX_COLUMN_WIDTH)
 
 
-def write_csv(tables: Dict[str, ReportTable], out_dir: str) -> List[str]:
+def write_csv(tables: dict[str, ReportTable], out_dir: str) -> list[str]:
     directory = Path(out_dir)
     directory.mkdir(parents=True, exist_ok=True)
     written = []

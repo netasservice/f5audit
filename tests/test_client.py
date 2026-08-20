@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import f5audit.client as client_module
-from f5audit.client import F5APIError, F5ReadOnlyClient, LOGIN_PATH
+from f5audit.client import LOGIN_PATH, F5APIError, F5ReadOnlyClient
 
 PACKAGE_DIR = Path(client_module.__file__).parent
 
@@ -38,6 +38,7 @@ def authed_client(**kwargs):
 # ---------------------------------------------------------------------------
 # Structural read-only guarantees (spec section 2)
 # ---------------------------------------------------------------------------
+
 
 def test_client_exposes_no_write_methods():
     for verb in ("post", "put", "patch", "delete", "request"):
@@ -70,6 +71,7 @@ def test_no_util_bash_anywhere_in_the_package():
 # Pagination
 # ---------------------------------------------------------------------------
 
+
 def test_get_collection_paginates_with_top_and_skip():
     client = authed_client(page_size=2)
     pages = [
@@ -98,11 +100,10 @@ def test_get_collection_single_short_page():
 # Auth behavior
 # ---------------------------------------------------------------------------
 
+
 def test_relogin_once_on_401_mid_collection():
     client = authed_client()
-    client._session.post.return_value = make_response(
-        200, {"token": {"token": "new-token"}}
-    )
+    client._session.post.return_value = make_response(200, {"token": {"token": "new-token"}})
     client._session.get.side_effect = [
         make_response(401),
         make_response(200, {"items": []}),
@@ -118,9 +119,7 @@ def test_relogin_once_on_401_mid_collection():
 
 def test_second_401_after_relogin_raises():
     client = authed_client()
-    client._session.post.return_value = make_response(
-        200, {"token": {"token": "new-token"}}
-    )
+    client._session.post.return_value = make_response(200, {"token": {"token": "new-token"}})
     client._session.get.side_effect = [make_response(401), make_response(401)]
 
     with pytest.raises(F5APIError) as excinfo:

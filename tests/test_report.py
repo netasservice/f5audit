@@ -21,8 +21,13 @@ def make_tables():
 def test_expected_sheets_exist():
     _, tables = make_tables()
     assert list(tables) == [
-        "summary", "inventory", "orphan_nodes", "pools",
-        "inactive_virtuals", "orphan_monitors", "manual_review",
+        "summary",
+        "inventory",
+        "orphan_nodes",
+        "pools",
+        "inactive_virtuals",
+        "orphan_monitors",
+        "manual_review",
     ]
 
 
@@ -30,11 +35,12 @@ def test_inventory_has_member_rows_and_orphan_node_rows():
     _, tables = make_tables()
     inventory = tables["inventory"]
     first_column = [row[0] for row in inventory.rows]
-    assert "/Common/node-web-1" in first_column       # pool member row
-    assert "/Common/node-orphan" in first_column      # node without pool
+    assert "/Common/node-web-1" in first_column  # pool member row
+    assert "/Common/node-orphan" in first_column  # node without pool
 
-    member_row = next(r for r in inventory.rows
-                      if r[0] == "/Common/node-web-1" and r[4] == "/Common/pool-web")
+    member_row = next(
+        r for r in inventory.rows if r[0] == "/Common/node-web-1" and r[4] == "/Common/pool-web"
+    )
     assert member_row[1] == "10.0.0.1"
     assert member_row[5] == "80"
     assert "/Common/vs-web" in member_row[9]
@@ -113,5 +119,6 @@ def test_default_report_name():
     name = default_report_name("bigip1.example.net")
     assert name.startswith("f5audit_bigip1.example.net_")
     assert name.endswith(".xlsx")
-    assert default_report_name("host", "csv").endswith(("0", "1", "2", "3", "4",
-                                                        "5", "6", "7", "8", "9"))
+    assert default_report_name("host", "csv").endswith(
+        ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
+    )
