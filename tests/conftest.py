@@ -44,9 +44,11 @@ def build_collection(
         "ltm_pool_members@/Common/pool-orphan": [],
         "ltm_pool_members@/Common/pool-irule": [],
         "ltm_pool_members@/Common/pool-idle": [],
+        "ltm_pool_members@/Common/pool-dead": load_fixture("pool_members_pool-dead.json"),
         "ltm_pool_member_stats@/Common/pool-web": load_fixture("pool_member_stats_pool-web.json"),
+        "ltm_pool_member_stats@/Common/pool-dead": load_fixture("pool_member_stats_pool-dead.json"),
         "ltm_virtual_stats": load_fixture(vs_stats),
-        "ltm_pool_stats": {},
+        "ltm_pool_stats": load_fixture("pool_stats.json"),
         "ltm_node_stats": load_fixture("node_stats.json"),
         "ltm_monitor_http@Common": load_fixture("monitors_http.json"),
     }

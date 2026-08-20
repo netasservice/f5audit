@@ -1,0 +1,13 @@
+{
+  "entries": {
+    "https://localhost/mgmt/tm/ltm/pool/~Common~pool-dead/members/~Common~node-dead:443/stats": {
+      "nestedStats": {
+        "entries": {
+          "serverside.curConns": {"value": 0},
+          "serverside.totConns": {"value": 120},
+          "status.availabilityState": {"description": "offline"}
+        }
+      }
+    }
+  }
+}

@@ -26,6 +26,7 @@ VERDICT_FILLS = {
     Verdict.UNRELIABLE_STANDBY: "FFEB9C",  # yellow
     Verdict.UNRELIABLE_INVENTORY: "FFEB9C",
     Verdict.INACTIVE: "FCD5B4",  # orange
+    Verdict.OFFLINE_CANDIDATE: "CCC0DA",  # purple
     Verdict.IN_USE: "C6EFCE",  # green
 }
 
@@ -66,6 +67,7 @@ def build_tables(
         "orphan_nodes": _build_orphan_nodes(parsed, analysis),
         "pools": _build_pools(parsed, correlation, analysis),
         "inactive_virtuals": _build_inactive_virtuals(parsed, analysis),
+        "dead_chains": _build_dead_chains(parsed, correlation, analysis),
         "orphan_monitors": _build_orphan_monitors(parsed, analysis),
         "manual_review": _build_manual_review(analysis),
     }
@@ -308,6 +310,72 @@ def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> Re
                 virtual.bits_out,
                 verdict.verdict,
                 verdict.notes,
+            ]
+        )
+    return table
+
+
+def _build_dead_chains(
+    parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
+) -> ReportTable:
+    """One row per dead chain, grouped by pool: the artifact to take to the
+    config owner. Commands are informational text, ordered VS -> pool ->
+    nodes, and a node alive in another pool gets no delete line."""
+    headers = [
+        "Pool",
+        "Partition",
+        "Pool status",
+        "Members",
+        "Member statuses",
+        "Node verdicts",
+        "Virtual servers",
+        "VS statuses",
+        "VS verdicts",
+        "Verdict",
+        "Notes",
+        "Suggested commands (informational)",
+    ]
+    table = ReportTable("Dead Chains", headers, verdict_column=9)
+    for path, verdict in sorted(analysis.pool_verdicts.items()):
+        if verdict.verdict != Verdict.OFFLINE_CANDIDATE:
+            continue
+        pool = parsed.pools[path]
+        vs_paths = sorted(vs for vs, pools in correlation.virtual_to_pools.items() if path in pools)
+        node_paths = sorted({member.node_full_path for member in pool.members})
+        commands = []
+        vs_states, vs_verdict_labels = [], []
+        for vs_path in vs_paths:
+            virtual = parsed.virtuals.get(vs_path)
+            vs_states.append(
+                f"{virtual.admin_state}/{virtual.availability or '?'}" if virtual else "?"
+            )
+            vs_verdict = analysis.virtual_verdicts.get(vs_path)
+            label = vs_verdict.verdict if vs_verdict else ""
+            vs_verdict_labels.append(label)
+            if label == Verdict.OFFLINE_CANDIDATE:
+                commands.append(f"tmsh delete ltm virtual {vs_path}")
+        commands.append(f"tmsh delete ltm pool {path}")
+        node_verdict_labels = []
+        for node_path in node_paths:
+            node_verdict = analysis.node_verdicts.get(node_path)
+            label = node_verdict.verdict if node_verdict else ""
+            node_verdict_labels.append(label)
+            if label == Verdict.OFFLINE_CANDIDATE:
+                commands.append(f"tmsh delete ltm node {node_path}")
+        table.rows.append(
+            [
+                path,
+                pool.partition,
+                pool.availability,
+                ", ".join(f"{m.node_full_path}:{m.port}" for m in pool.members),
+                ", ".join(f"{m.admin_state}/{m.availability or '?'}" for m in pool.members),
+                ", ".join(node_verdict_labels),
+                ", ".join(vs_paths),
+                ", ".join(vs_states),
+                ", ".join(vs_verdict_labels),
+                verdict.verdict,
+                verdict.notes,
+                "\n".join(commands),
             ]
         )
     return table

@@ -11,6 +11,16 @@
   },
   {
     "kind": "tm:ltm:node:nodestate",
+    "name": "node-dead",
+    "partition": "Common",
+    "fullPath": "/Common/node-dead",
+    "address": "10.0.0.50",
+    "monitor": "/Common/icmp ",
+    "session": "monitor-enabled",
+    "state": "down"
+  },
+  {
+    "kind": "tm:ltm:node:nodestate",
     "name": "node-orphan",
     "partition": "Common",
     "fullPath": "/Common/node-orphan",

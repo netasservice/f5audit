@@ -45,6 +45,14 @@ class Correlation:
     pool_to_irules: dict[str, set[str]] = field(default_factory=dict)
     pool_to_policies: dict[str, set[str]] = field(default_factory=dict)
     monitor_users: dict[str, set[str]] = field(default_factory=dict)
+    # Virtual server -> every pool it can reach statically: default pool,
+    # pools referenced by attached iRules and pools forwarded by attached
+    # policies. Used by the dead-chain analysis.
+    virtual_to_pools: dict[str, set[str]] = field(default_factory=dict)
+    # Virtual servers whose reachable-pool set cannot be trusted: a dynamic
+    # pool-selection iRule is attached, or an attached iRule/policy was not
+    # readable. Such a VS can never be proven dead.
+    virtuals_with_unprovable_pool_selection: set[str] = field(default_factory=set)
     # Dynamic iRules that are actually attached to at least one virtual
     # server. While one exists, no pool can safely be called an orphan.
     attached_dynamic_irules: list[str] = field(default_factory=list)
@@ -88,13 +96,31 @@ def correlate(parsed: ParsedData) -> Correlation:
         for pool_ref in policy.forwarded_pools:
             _add(correlation.pool_to_policies, pool_ref, policy.full_path)
 
-    # 5. Dynamic iRules attached to virtual servers.
+    # 5. Per-VS reachable pools, and dynamic iRules attached to virtual
+    #    servers. An attached iRule that is not in the parsed inventory
+    #    (e.g. ltm/rule denied) makes the VS's pool selection unprovable.
     attached: set[str] = set()
     for virtual in parsed.virtuals.values():
+        reachable: set[str] = set()
+        if virtual.default_pool:
+            reachable.add(virtual.default_pool)
         for irule_path in virtual.irules:
             irule = parsed.irules.get(irule_path)
-            if irule and irule.has_dynamic_pool_selection:
+            if irule is None:
+                correlation.virtuals_with_unprovable_pool_selection.add(virtual.full_path)
+                continue
+            if irule.has_dynamic_pool_selection:
                 attached.add(irule_path)
+                correlation.virtuals_with_unprovable_pool_selection.add(virtual.full_path)
+            reachable.update(irule.referenced_pools)
+        for policy_path in virtual.policies:
+            policy = parsed.policies.get(policy_path)
+            if policy is None:
+                correlation.virtuals_with_unprovable_pool_selection.add(virtual.full_path)
+                continue
+            reachable.update(policy.forwarded_pools)
+        if reachable:
+            correlation.virtual_to_pools[virtual.full_path] = reachable
     correlation.attached_dynamic_irules = sorted(attached)
 
     # 6. Monitor -> nodes/pools using it (node default monitors included).
