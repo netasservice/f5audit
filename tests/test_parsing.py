@@ -9,10 +9,10 @@ from f5audit.parsing import (
 )
 from tests.conftest import build_collection
 
-
 # ---------------------------------------------------------------------------
 # iRule Tcl analysis
 # ---------------------------------------------------------------------------
+
 
 def test_irule_static_pool_with_partition():
     refs, dynamic = analyze_irule_tcl("pool /Common/pool-x", "Common")
@@ -33,17 +33,14 @@ def test_irule_dynamic_variable():
 
 
 def test_irule_dynamic_class_match_bracket():
-    tcl = 'pool [class match -value [HTTP::host] equals dg_hosts]'
+    tcl = "pool [class match -value [HTTP::host] equals dg_hosts]"
     refs, dynamic = analyze_irule_tcl(tcl, "Common")
     assert refs == []
     assert dynamic is True
 
 
 def test_irule_class_match_then_pool_on_later_line():
-    tcl = (
-        'set target [class match -value [HTTP::host] equals dg_hosts]\n'
-        'pool $target'
-    )
+    tcl = "set target [class match -value [HTTP::host] equals dg_hosts]\npool $target"
     _, dynamic = analyze_irule_tcl(tcl, "Common")
     assert dynamic is True
 
@@ -58,7 +55,7 @@ def test_irule_commented_pool_is_ignored():
 def test_irule_nested_tcl_braces():
     tcl = (
         "when HTTP_REQUEST {\n"
-        "  if { [HTTP::uri] starts_with \"/api\" } {\n"
+        '  if { [HTTP::uri] starts_with "/api" } {\n'
         "    if { [HTTP::header exists X-Env] } { pool /Common/pool-api }\n"
         "  } else {\n"
         "    pool pool-default\n"
@@ -86,6 +83,7 @@ def test_irule_mixed_static_and_dynamic():
 # Normalization helpers
 # ---------------------------------------------------------------------------
 
+
 def test_normalize_ref():
     assert normalize_ref("/Common/x", "Other") == "/Common/x"
     assert normalize_ref("x", "Other") == "/Other/x"
@@ -105,10 +103,12 @@ def test_split_member_name_ipv6():
 def test_parse_monitor_refs():
     assert parse_monitor_refs("/Common/http ", "Common") == ["/Common/http"]
     assert parse_monitor_refs("/Common/http and /Common/tcp", "Common") == [
-        "/Common/http", "/Common/tcp",
+        "/Common/http",
+        "/Common/tcp",
     ]
     assert parse_monitor_refs("min 1 of { /Common/a /Common/b }", "Common") == [
-        "/Common/a", "/Common/b",
+        "/Common/a",
+        "/Common/b",
     ]
     assert parse_monitor_refs("default", "Common") == []
     assert parse_monitor_refs("custom_mon", "PartA") == ["/PartA/custom_mon"]
@@ -117,6 +117,7 @@ def test_parse_monitor_refs():
 # ---------------------------------------------------------------------------
 # Full collection parsing (fixtures)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_collection_builds_models():
     parsed = parse_collection(build_collection())

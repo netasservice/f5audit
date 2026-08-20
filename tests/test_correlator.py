@@ -20,7 +20,8 @@ def test_pool_to_virtuals():
     correlation = correlate(make_parsed())
     # vs-web and vs-disabled both use pool-web as default pool.
     assert correlation.pool_to_virtuals["/Common/pool-web"] == {
-        "/Common/vs-web", "/Common/vs-disabled",
+        "/Common/vs-web",
+        "/Common/vs-disabled",
     }
     assert correlation.pool_to_virtuals["/Common/pool-idle"] == {"/Common/vs-idle"}
     assert "/Common/pool-orphan" not in correlation.pool_to_virtuals
@@ -41,8 +42,11 @@ def test_no_dynamic_irules_attached_in_base_fixture():
 def test_dynamic_irule_only_counts_when_attached_to_a_virtual():
     parsed = make_parsed()
     parsed.irules["/Common/irule-dyn"] = IRule(
-        full_path="/Common/irule-dyn", partition="Common", name="irule-dyn",
-        definition="pool $x", has_dynamic_pool_selection=True,
+        full_path="/Common/irule-dyn",
+        partition="Common",
+        name="irule-dyn",
+        definition="pool $x",
+        has_dynamic_pool_selection=True,
     )
     # Not attached anywhere yet: must not count.
     assert correlate(parsed).has_attached_dynamic_irules is False

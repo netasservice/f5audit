@@ -7,7 +7,6 @@ minimal on the target VDI machine.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -20,7 +19,7 @@ class Node:
     admin_state: str = ""  # enabled / disabled / forced offline
     monitor_status: str = ""
     availability: str = ""
-    total_conns: Optional[int] = None
+    total_conns: int | None = None
 
 
 @dataclass
@@ -30,8 +29,8 @@ class PoolMember:
     partition: str = ""
     admin_state: str = ""
     availability: str = ""
-    cur_conns: Optional[int] = None
-    total_conns: Optional[int] = None
+    cur_conns: int | None = None
+    total_conns: int | None = None
     priority_group: int = 0
 
 
@@ -40,11 +39,11 @@ class Pool:
     full_path: str
     partition: str
     name: str
-    monitors: List[str] = field(default_factory=list)  # normalized full paths
+    monitors: list[str] = field(default_factory=list)  # normalized full paths
     lb_method: str = ""
-    members: List[PoolMember] = field(default_factory=list)
+    members: list[PoolMember] = field(default_factory=list)
     availability: str = ""
-    total_conns: Optional[int] = None
+    total_conns: int | None = None
 
 
 @dataclass
@@ -54,15 +53,15 @@ class VirtualServer:
     name: str
     destination: str = ""  # ip:port
     default_pool: str = ""  # normalized full path, empty if none
-    irules: List[str] = field(default_factory=list)
-    policies: List[str] = field(default_factory=list)
-    profiles: List[str] = field(default_factory=list)
-    persistence: List[str] = field(default_factory=list)
+    irules: list[str] = field(default_factory=list)
+    policies: list[str] = field(default_factory=list)
+    profiles: list[str] = field(default_factory=list)
+    persistence: list[str] = field(default_factory=list)
     admin_state: str = ""  # enabled / disabled
     availability: str = ""
-    total_conns: Optional[int] = None
-    bits_in: Optional[int] = None
-    bits_out: Optional[int] = None
+    total_conns: int | None = None
+    bits_in: int | None = None
+    bits_out: int | None = None
 
 
 @dataclass
@@ -71,7 +70,7 @@ class IRule:
     partition: str
     name: str
     definition: str = ""  # raw Tcl (apiAnonymous)
-    referenced_pools: List[str] = field(default_factory=list)  # static refs, normalized
+    referenced_pools: list[str] = field(default_factory=list)  # static refs, normalized
     has_dynamic_pool_selection: bool = False
 
 
@@ -80,8 +79,8 @@ class Policy:
     full_path: str
     partition: str
     name: str
-    forwarded_pools: List[str] = field(default_factory=list)  # normalized full paths
-    attached_virtuals: List[str] = field(default_factory=list)
+    forwarded_pools: list[str] = field(default_factory=list)  # normalized full paths
+    attached_virtuals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -100,6 +99,6 @@ class SystemInfo:
     active_device: str = ""
     uptime: str = ""  # human readable, best effort
     collection_timestamp: str = ""
-    partitions_collected: List[str] = field(default_factory=list)
-    partitions_denied: List[str] = field(default_factory=list)
-    missing_endpoints: List[str] = field(default_factory=list)
+    partitions_collected: list[str] = field(default_factory=list)
+    partitions_denied: list[str] = field(default_factory=list)
+    missing_endpoints: list[str] = field(default_factory=list)
