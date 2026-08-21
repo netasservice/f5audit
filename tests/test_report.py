@@ -46,10 +46,11 @@ def test_inventory_has_member_rows_and_orphan_node_rows():
     assert member_row[1] == "10.0.0.1"
     assert member_row[5] == "80"
     assert "/Common/vs-web" in member_row[9]
-    assert member_row[15] == Verdict.IN_USE
+    assert member_row[13] == "/Common/irule-static"  # iRules attached to the VS
+    assert member_row[16] == Verdict.IN_USE
 
     orphan_row = next(r for r in inventory.rows if r[0] == "/Common/node-orphan")
-    assert orphan_row[15] == Verdict.ORPHAN
+    assert orphan_row[16] == Verdict.ORPHAN
 
 
 def test_orphan_sheets_only_contain_non_in_use_objects():

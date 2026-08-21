@@ -1,7 +1,7 @@
 """Correlation index tests."""
 
-from f5audit.correlator import correlate, is_builtin_monitor
-from f5audit.models import IRule
+from f5audit.correlator import correlate, dynamic_reach_partitions, is_builtin_monitor
+from f5audit.models import IRule, Pool, PoolMember, VirtualServer
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
 
@@ -54,6 +54,75 @@ def test_dynamic_irule_only_counts_when_attached_to_a_virtual():
     parsed.virtuals["/Common/vs-web"].irules.append("/Common/irule-dyn")
     correlation = correlate(parsed)
     assert correlation.attached_dynamic_irules == ["/Common/irule-dyn"]
+
+
+def _make_dynamic_irule(partition: str, definition: str = "pool $x") -> IRule:
+    return IRule(
+        full_path=f"/{partition}/irule-dyn",
+        partition=partition,
+        name="irule-dyn",
+        definition=definition,
+        has_dynamic_pool_selection=True,
+    )
+
+
+def _add_partition_objects(parsed, partition: str) -> None:
+    """A pool with one member node, and a VS, all living in `partition`."""
+    pool_path = f"/{partition}/pool-p"
+    node_path = f"/{partition}/node-p"
+    parsed.pools[pool_path] = Pool(
+        full_path=pool_path,
+        partition=partition,
+        name="pool-p",
+        members=[PoolMember(node_full_path=node_path, port="80", partition=partition)],
+    )
+    parsed.virtuals[f"/{partition}/vs-p"] = VirtualServer(
+        full_path=f"/{partition}/vs-p",
+        partition=partition,
+        name="vs-p",
+        default_pool=pool_path,
+    )
+
+
+def test_dynamic_reach_covers_irule_partition_vs_partition_and_common():
+    irule = _make_dynamic_irule("PartA")
+    virtual = VirtualServer(full_path="/PartB/vs", partition="PartB", name="vs")
+    assert dynamic_reach_partitions(irule, virtual) == {"PartA", "PartB", "Common"}
+
+
+def test_dynamic_reach_includes_partitions_named_literally_in_tcl():
+    irule = _make_dynamic_irule("PartA", "# pool /Ignored/x\nset p /PartC/pool-$x\npool $p")
+    virtual = VirtualServer(full_path="/PartA/vs", partition="PartA", name="vs")
+    assert dynamic_reach_partitions(irule, virtual) == {"PartA", "PartC", "Common"}
+
+
+def test_dynamic_irule_reach_is_scoped_by_partition():
+    parsed = make_parsed()
+    _add_partition_objects(parsed, "PartA")
+    _add_partition_objects(parsed, "PartB")
+    irule = _make_dynamic_irule("PartA")
+    parsed.irules[irule.full_path] = irule
+    parsed.virtuals["/PartA/vs-p"].irules.append(irule.full_path)
+    correlation = correlate(parsed)
+
+    assert correlation.dynamic_irules_for_pool("/PartA/pool-p") == {irule.full_path}
+    assert correlation.dynamic_irules_for_pool("/Common/pool-orphan") == {irule.full_path}
+    assert correlation.dynamic_irules_for_pool("/PartB/pool-p") == set()
+    # Nodes inherit the reach of their pools.
+    assert correlation.dynamic_irules_for_node("/PartA/node-p") == {irule.full_path}
+    assert correlation.dynamic_irules_for_node("/PartB/node-p") == set()
+    assert correlation.dynamic_irules_for_node("/Common/node-orphan") == set()
+
+
+def test_dynamic_irule_literal_path_extends_reach_to_other_partition():
+    parsed = make_parsed()
+    _add_partition_objects(parsed, "PartA")
+    _add_partition_objects(parsed, "PartB")
+    irule = _make_dynamic_irule("PartA", "pool /PartB/pool-$x")
+    parsed.irules[irule.full_path] = irule
+    parsed.virtuals["/PartA/vs-p"].irules.append(irule.full_path)
+    correlation = correlate(parsed)
+    assert correlation.dynamic_irules_for_pool("/PartB/pool-p") == {irule.full_path}
 
 
 def test_virtual_to_pools_includes_default_pool_and_irule_pools():

@@ -94,10 +94,10 @@ with warnings (standby device, denied partitions, missing endpoints).
 
 | Verdict | Meaning |
 |---|---|
-| `ORPHAN` | Not referenced by anything (node: no pool membership; pool: no VS/iRule/policy reference; monitor: no user). Only issued when the inventory is complete and no dynamic iRules are active. |
-| `MANUAL REVIEW` | A dynamic iRule (`pool $var`, `pool [...]`, datagroups) or a missing `ltm/rule` endpoint means the object *could* be referenced at runtime. Never auto-cleanup these. |
+| `ORPHAN` | Not referenced by anything (node: no pool membership; pool: no VS/iRule/policy reference; monitor: no user). Only issued when the inventory is complete and no attached dynamic iRule can reach the object (see `MANUAL REVIEW`). |
+| `MANUAL REVIEW` | A dynamic iRule (`pool $var`, `pool [...]`, datagroups) or a missing `ltm/rule` endpoint means the object *could* be referenced at runtime. Never auto-cleanup these. A dynamic iRule attached to a virtual server reaches the pools of its own partition, the VS's partition, `/Common`, and any partition named literally (`/Partition/...`) in its Tcl; pools in other partitions are not affected, and nodes inherit the reach of their pools. |
 | `INACTIVE` | Configured and referenced, but disabled or zero total connections since the last counter reset. |
-| `OFFLINE (decommission candidate)` | Referenced, but the whole dependency chain is monitor-offline: every member of the pool is down, so the pool and its virtual servers are offline. A deletion candidate to confirm with the config owner — availability is point-in-time, so it may also mean maintenance. A node is only included when it is dead in **every** pool it belongs to; a node alive in another pool stays `IN USE` ("in use elsewhere"). Only issued on the ACTIVE unit; capped at `MANUAL REVIEW` while dynamic iRules are attached. |
+| `OFFLINE (decommission candidate)` | Referenced, but the whole dependency chain is monitor-offline: every member of the pool is down, so the pool and its virtual servers are offline. A deletion candidate to confirm with the config owner — availability is point-in-time, so it may also mean maintenance. A node is only included when it is dead in **every** pool it belongs to; a node alive in another pool stays `IN USE` ("in use elsewhere"). Only issued on the ACTIVE unit; capped at `MANUAL REVIEW` when an attached dynamic iRule can reach the pool. |
 | `UNRELIABLE (standby)` | Traffic-based verdict computed on a standby unit (only with `--allow-standby`). |
 | `UNRELIABLE (incomplete inventory)` | Some partitions were not readable; a reference could exist in an invisible partition. |
 | `IN USE` | Everything else. |
@@ -125,10 +125,12 @@ with warnings (standby device, denied partitions, missing endpoints).
    verdict counts, active warnings.
 2. **Inventory** — one row per pool member (plus rows for pool-less
    nodes), fully correlated: node ↔ pool ↔ virtual server ↔ monitor ↔
-   iRule/policy references, statuses, traffic and verdict.
+   iRule/policy references, statuses, traffic and verdict. `VS iRules`
+   lists the iRules attached to the row's virtual servers; `iRule refs`
+   lists the iRules that statically select the row's pool (`pool X`).
 3. **Orphan Nodes** · 4. **Orphan-Inactive Pools** · 5. **Inactive
-   Virtual Servers** — filtered views with informational `tmsh` commands
-   for the change request.
+   Virtual Servers** (with the attached `iRules`) — filtered views with
+   informational `tmsh` commands for the change request.
 6. **Dead Chains** — one row per pool with an
    `OFFLINE (decommission candidate)` verdict, grouping the whole chain
    (virtual servers → pool → member nodes) with per-object verdicts and

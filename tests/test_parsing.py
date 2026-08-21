@@ -79,6 +79,36 @@ def test_irule_mixed_static_and_dynamic():
     assert dynamic is True
 
 
+def test_irule_pool_in_folder_keeps_full_path():
+    refs, dynamic = analyze_irule_tcl("pool /Common/folder/pool-x", "Common")
+    assert refs == ["/Common/folder/pool-x"]
+    assert dynamic is False
+
+
+def test_irule_quoted_pool_argument():
+    refs, dynamic = analyze_irule_tcl('pool "/Common/pool-x"\npool "pool-y"', "PartitionA")
+    assert refs == ["/Common/pool-x", "/PartitionA/pool-y"]
+    assert dynamic is False
+
+
+def test_irule_partition_without_leading_slash():
+    refs, _ = analyze_irule_tcl("pool Common/pool-x", "PartitionA")
+    assert refs == ["/Common/pool-x"]
+
+
+def test_irule_pool_word_inside_string_literal_is_not_a_ref():
+    tcl = 'log local0. "selected pool for [HTTP::host]"\nHTTP::respond 200 content "pool x"'
+    refs, dynamic = analyze_irule_tcl(tcl, "Common")
+    assert refs == []
+    assert dynamic is False
+
+
+def test_irule_class_match_with_pool_only_in_string_is_not_dynamic():
+    tcl = 'if { [class match [HTTP::uri] starts_with dg] } { log local0. "pool hit" }'
+    _, dynamic = analyze_irule_tcl(tcl, "Common")
+    assert dynamic is False
+
+
 # ---------------------------------------------------------------------------
 # Normalization helpers
 # ---------------------------------------------------------------------------

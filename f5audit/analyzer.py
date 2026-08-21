@@ -174,7 +174,12 @@ class Analyzer:
                 if all(pool_path in self._dead_pools for pool_path in pools):
                     evidence = self._node_offline_evidence(path, node, pools)
                     if evidence and self._offline_verdict(
-                        result, result.node_verdicts, "node", path, evidence
+                        result,
+                        result.node_verdicts,
+                        "node",
+                        path,
+                        evidence,
+                        dynamic_irules=self.correlation.dynamic_irules_for_node(path),
                     ):
                         continue
                 elif node.availability == "offline":
@@ -245,10 +250,11 @@ class Analyzer:
         path: str,
         note: str,
         *,
-        cap_on_dynamic: bool = True,
+        dynamic_irules: set[str],
     ) -> bool:
         """Emit an availability-based OFFLINE verdict, degraded on standby
-        and capped at MANUAL REVIEW while dynamic iRules are attached.
+        and capped at MANUAL REVIEW when `dynamic_irules` (the attached
+        dynamic iRules that can reach the object) is non-empty.
         Returns False when skipped so the caller falls through to the
         existing rules."""
         if self.is_standby:
@@ -260,8 +266,8 @@ class Analyzer:
                 "state may differ from the active unit. " + note,
             )
             return True
-        if cap_on_dynamic and self.correlation.has_attached_dynamic_irules:
-            dynamic = ", ".join(self.correlation.attached_dynamic_irules)
+        if dynamic_irules:
+            dynamic = ", ".join(sorted(dynamic_irules))
             verdicts[path] = ObjectVerdict(
                 Verdict.MANUAL_REVIEW,
                 note + " Dynamic pool-selection iRules are active "
@@ -312,7 +318,7 @@ class Analyzer:
                     # The VS's own pool selection is provably static and dead;
                     # dynamic iRules on other virtual servers do not change
                     # whether this VS can serve traffic.
-                    cap_on_dynamic=False,
+                    dynamic_irules=set(),
                 )
                 if emitted:
                     continue
@@ -365,6 +371,7 @@ class Analyzer:
                     path,
                     f"Pool offline: all {len(pool.members)} member(s) down "
                     f"({members_desc}). " + POINT_IN_TIME_NOTE,
+                    dynamic_irules=self.correlation.dynamic_irules_for_pool(path),
                 )
                 if emitted:
                     continue
@@ -407,13 +414,13 @@ class Analyzer:
                     "Unreferenced, but ltm/rule was not readable",
                 )
             )
-        elif self.correlation.has_attached_dynamic_irules:
-            dynamic = ", ".join(self.correlation.attached_dynamic_irules)
+        elif self.correlation.dynamic_irules_for_pool(path):
+            dynamic = ", ".join(sorted(self.correlation.dynamic_irules_for_pool(path)))
             result.pool_verdicts[path] = ObjectVerdict(
                 Verdict.MANUAL_REVIEW,
                 "No static references, but dynamic pool-selection iRules "
-                f"are active ({dynamic}); the pool could be selected at "
-                "runtime.",
+                f"that can reach this partition are active ({dynamic}); "
+                "the pool could be selected at runtime.",
             )
             result.manual_review.append(
                 ManualReviewItem(
