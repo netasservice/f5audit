@@ -28,9 +28,14 @@ logger = logging.getLogger("f5audit.parsing")
 # --- iRule analysis -------------------------------------------------------
 
 COMMENT_LINE_RE = re.compile(r"^\s*#")
-# Static reference: 'pool /Common/x' or 'pool x'. The lookbehind avoids
-# matching Tcl namespaced commands such as 'LB::pool'.
-STATIC_POOL_RE = re.compile(r"(?<!:)\bpool\s+((?:/[\w.-]+)?/?[\w.-]+)")
+# Static reference: 'pool /Common/x', 'pool x', 'pool "x"' or a folder path
+# such as 'pool /Common/folder/x'. The lookbehind avoids matching Tcl
+# namespaced commands such as 'LB::pool'.
+STATIC_POOL_RE = re.compile(r'(?<!:)\bpool\s+"?(/?[\w.-]+(?:/[\w.-]+)*)"?')
+# 'pool "x"' is a real reference; any other quoted string on the line is
+# free text (log messages, headers) and must not yield pool references.
+_QUOTED_POOL_ARG_RE = re.compile(r'(?<!:)(\bpool\s+)"([^"]*)"')
+_STRING_LITERAL_RE = re.compile(r'"[^"]*"')
 # Dynamic selection that cannot be resolved statically: 'pool $var',
 # 'pool [expr ...]' / 'pool [class match ...]'.
 DYNAMIC_POOL_RE = re.compile(r"(?<!:)\bpool\s+[\[$]")
@@ -81,6 +86,12 @@ def parse_monitor_refs(value: str | None, default_partition: str) -> list[str]:
     return refs
 
 
+def _strip_string_literals(line: str) -> str:
+    """Unquote a 'pool "x"' argument and blank every other string literal."""
+    line = _QUOTED_POOL_ARG_RE.sub(r"\1\2", line)
+    return _STRING_LITERAL_RE.sub('""', line)
+
+
 def analyze_irule_tcl(definition: str, partition: str) -> tuple[list[str], bool]:
     """Return (static_pool_refs, has_dynamic_pool_selection) for Tcl code.
 
@@ -99,6 +110,7 @@ def analyze_irule_tcl(definition: str, partition: str) -> tuple[list[str], bool]
             dynamic = True
         if CLASS_MATCH_RE.search(line):
             saw_class_match = True
+        line = _strip_string_literals(line)
         if POOL_KEYWORD_RE.search(line):
             saw_pool_keyword = True
         for match in STATIC_POOL_RE.finditer(line):

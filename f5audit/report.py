@@ -109,8 +109,9 @@ def _build_summary(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
 
 
 def _vs_summary(parsed: ParsedData, vs_paths) -> tuple:
-    """(names, destinations, states, total_conns) joined for a VS set."""
-    names, destinations, states, conns = [], [], [], []
+    """(names, destinations, states, total_conns, attached iRules) joined
+    for a VS set."""
+    names, destinations, states, conns, irules = [], [], [], [], []
     for path in sorted(vs_paths):
         virtual = parsed.virtuals.get(path)
         if not virtual:
@@ -121,7 +122,14 @@ def _vs_summary(parsed: ParsedData, vs_paths) -> tuple:
         states.append(f"{virtual.admin_state}/{virtual.availability or '?'}")
         if virtual.total_conns is not None:
             conns.append(str(virtual.total_conns))
-    return (", ".join(names), ", ".join(destinations), ", ".join(states), ", ".join(conns))
+        irules.extend(irule for irule in virtual.irules if irule not in irules)
+    return (
+        ", ".join(names),
+        ", ".join(destinations),
+        ", ".join(states),
+        ", ".join(conns),
+        ", ".join(irules),
+    )
 
 
 def _build_inventory(
@@ -141,18 +149,19 @@ def _build_inventory(
         "VIP:Port",
         "VS status",
         "VS total conns",
+        "VS iRules",
         "iRule refs",
         "Policy refs",
         "Verdict",
         "Notes",
     ]
-    table = ReportTable("Inventory", headers, verdict_column=15)
+    table = ReportTable("Inventory", headers, verdict_column=16)
 
     nodes_in_pools = set()
     for pool_path, pool in sorted(parsed.pools.items()):
         verdict = analysis.pool_verdicts.get(pool_path)
         vs_paths = correlation.pool_to_virtuals.get(pool_path, set())
-        vs_names, vips, vs_states, vs_conns = _vs_summary(parsed, vs_paths)
+        vs_names, vips, vs_states, vs_conns, vs_irules = _vs_summary(parsed, vs_paths)
         irule_refs = _join(correlation.pool_to_irules.get(pool_path, set()))
         policy_refs = _join(correlation.pool_to_policies.get(pool_path, set()))
         members = pool.members or [None]
@@ -176,6 +185,7 @@ def _build_inventory(
                     vips,
                     vs_states,
                     vs_conns,
+                    vs_irules,
                     irule_refs,
                     policy_refs,
                     verdict.verdict if verdict else "",
@@ -198,6 +208,7 @@ def _build_inventory(
                 "",
                 "",
                 node.monitor,
+                "",
                 "",
                 "",
                 "",
@@ -285,6 +296,7 @@ def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> Re
         "Virtual server",
         "VIP:Port",
         "Default pool",
+        "iRules",
         "State",
         "Availability",
         "Total conns",
@@ -293,7 +305,7 @@ def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> Re
         "Verdict",
         "Notes",
     ]
-    table = ReportTable("Inactive Virtual Servers", headers, verdict_column=8)
+    table = ReportTable("Inactive Virtual Servers", headers, verdict_column=9)
     for path, verdict in sorted(analysis.virtual_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -303,6 +315,7 @@ def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> Re
                 path,
                 virtual.destination,
                 virtual.default_pool,
+                _join(virtual.irules),
                 virtual.admin_state,
                 virtual.availability,
                 virtual.total_conns,

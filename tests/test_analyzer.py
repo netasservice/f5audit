@@ -2,7 +2,7 @@
 
 from f5audit.analyzer import Analyzer, Verdict
 from f5audit.correlator import correlate
-from f5audit.models import IRule, PoolMember
+from f5audit.models import IRule, Pool, PoolMember, VirtualServer
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
 
@@ -94,6 +94,48 @@ def test_dynamic_irule_caps_orphan_pool_at_manual_review():
         item.object_type == "irule" and item.full_path == "/Common/irule-dyn"
         for item in result.manual_review
     )
+
+
+def attach_dynamic_irule_in_other_partition(parsed):
+    """Dynamic iRule attached to a VS in /PartA, with no literal path to
+    /Common or elsewhere: it can only reach /PartA and /Common pools."""
+    parsed.irules["/PartA/irule-dyn"] = IRule(
+        full_path="/PartA/irule-dyn",
+        partition="PartA",
+        name="irule-dyn",
+        definition="pool $x",
+        has_dynamic_pool_selection=True,
+    )
+    parsed.virtuals["/PartA/vs-a"] = VirtualServer(
+        full_path="/PartA/vs-a",
+        partition="PartA",
+        name="vs-a",
+        irules=["/PartA/irule-dyn"],
+    )
+
+
+def move_dead_chain_to_partition_b(parsed):
+    """Re-home pool-dead (and its VS) in /PartB; node-dead keeps its path."""
+    pool = parsed.pools.pop("/Common/pool-dead")
+    pool.full_path, pool.partition = "/PartB/pool-dead", "PartB"
+    parsed.pools[pool.full_path] = pool
+    virtual = parsed.virtuals["/Common/vs-dead"]
+    virtual.default_pool = pool.full_path
+
+
+def test_dynamic_irule_in_other_partition_does_not_cap_unreferenced_pool():
+    def mutate(parsed):
+        attach_dynamic_irule_in_other_partition(parsed)
+        parsed.pools["/PartB/pool-unused"] = Pool(
+            full_path="/PartB/pool-unused", partition="PartB", name="pool-unused"
+        )
+
+    result = analyze(mutate=mutate)
+    assert result.pool_verdicts["/PartB/pool-unused"].verdict == Verdict.ORPHAN
+    # /Common is always in reach of any attached dynamic iRule.
+    verdict = result.pool_verdicts["/Common/pool-orphan"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "/PartA/irule-dyn" in verdict.notes
 
 
 def test_missing_ltm_rule_endpoint_caps_orphan_pool_at_manual_review():
@@ -244,6 +286,16 @@ def test_dynamic_irules_cap_dead_pool_and_node_at_manual_review():
     )
     # The VS's own pool selection is static and provably dead: still OFFLINE.
     assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+
+
+def test_dynamic_irule_in_other_partition_does_not_cap_dead_pool_and_node():
+    def mutate(parsed):
+        attach_dynamic_irule_in_other_partition(parsed)
+        move_dead_chain_to_partition_b(parsed)
+
+    result = analyze(mutate=mutate)
+    assert result.pool_verdicts["/PartB/pool-dead"].verdict == Verdict.OFFLINE_CANDIDATE
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.OFFLINE_CANDIDATE
 
 
 def test_virtual_with_own_dynamic_irule_never_offline():
