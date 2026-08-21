@@ -109,6 +109,50 @@ def test_irule_class_match_with_pool_only_in_string_is_not_dynamic():
     assert dynamic is False
 
 
+def test_irule_class_match_condition_with_literal_pool_is_static():
+    # Regression: 'class match' used as an if-condition gates a static
+    # 'pool literal'; the selected pool is fully known.
+    tcl = (
+        "when CLIENT_ACCEPTED {\n"
+        " if { [class match [IP::client_addr] equals Office365] } {\n"
+        '  log local0. "Client Source IP: [IP::client_addr]"\n'
+        "  snat 192.0.2.85\n"
+        '  pool "hybrid-Reverse_Proxy-Pool"\n'
+        " } \n"
+        "}"
+    )
+    refs, dynamic = analyze_irule_tcl(tcl, "PartitionA")
+    assert refs == ["/PartitionA/hybrid-Reverse_Proxy-Pool"]
+    assert dynamic is False
+
+
+def test_irule_class_match_condition_with_unquoted_literal_pool_is_static():
+    tcl = "if { [class match [HTTP::host] equals hosts_dg] } { pool /Common/pool-a }"
+    refs, dynamic = analyze_irule_tcl(tcl, "Common")
+    assert refs == ["/Common/pool-a"]
+    assert dynamic is False
+
+
+def test_irule_class_match_value_assigned_then_used_is_dynamic():
+    tcl = "set target [class match -value [HTTP::host] equals dg]\npool $target"
+    refs, dynamic = analyze_irule_tcl(tcl, "Common")
+    assert refs == []
+    assert dynamic is True
+
+
+def test_irule_quoted_variable_pool_is_dynamic():
+    refs, dynamic = analyze_irule_tcl('pool "$selected"\npool "[lindex $pools 0]"', "Common")
+    assert refs == []
+    assert dynamic is True
+
+
+def test_irule_class_match_only_without_pool_is_not_dynamic():
+    tcl = "if { [class match [IP::client_addr] equals dg] } { snat 192.0.2.44 }"
+    refs, dynamic = analyze_irule_tcl(tcl, "Common")
+    assert refs == []
+    assert dynamic is False
+
+
 # ---------------------------------------------------------------------------
 # Normalization helpers
 # ---------------------------------------------------------------------------

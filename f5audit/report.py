@@ -140,6 +140,7 @@ def _build_inventory(
         "IP",
         "Partition",
         "Node status",
+        "Node verdict",
         "Pool",
         "Port",
         "Member status",
@@ -152,10 +153,12 @@ def _build_inventory(
         "VS iRules",
         "iRules selecting pool",
         "Policies forwarding to pool",
-        "Verdict",
-        "Notes",
+        "Pool verdict",
+        "Pool notes",
     ]
-    table = ReportTable("Inventory", headers, verdict_column=16)
+    # One row per pool member: the colored verdict is the pool's, the node's
+    # own verdict has its own column so the two are never confused.
+    table = ReportTable("Inventory", headers, verdict_column=17)
 
     nodes_in_pools = set()
     for pool_path, pool in sorted(parsed.pools.items()):
@@ -167,6 +170,7 @@ def _build_inventory(
         members = pool.members or [None]
         for member in members:
             node = parsed.nodes.get(member.node_full_path) if member else None
+            node_verdict = analysis.node_verdicts.get(member.node_full_path) if member else None
             if member:
                 nodes_in_pools.add(member.node_full_path)
             monitor = _join(pool.monitors) or (node.monitor if node else "")
@@ -176,6 +180,7 @@ def _build_inventory(
                     node.address if node else "",
                     pool.partition,
                     f"{node.admin_state}/{node.availability or '?'}" if node else "",
+                    node_verdict.verdict if node_verdict else "",
                     pool_path,
                     member.port if member else "",
                     f"{member.admin_state}/{member.availability or '?'}" if member else "",
@@ -204,6 +209,7 @@ def _build_inventory(
                 node.address,
                 node.partition,
                 f"{node.admin_state}/{node.availability or '?'}",
+                verdict.verdict if verdict else "",
                 "",
                 "",
                 "",
@@ -216,6 +222,7 @@ def _build_inventory(
                 "",
                 "",
                 "",
+                # No pool: the node verdict is the only one, keep it colored.
                 verdict.verdict if verdict else "",
                 verdict.notes if verdict else "",
             ]
