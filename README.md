@@ -125,12 +125,19 @@ with warnings (standby device, denied partitions, missing endpoints).
    verdict counts, active warnings.
 2. **Inventory** — one row per pool member (plus rows for pool-less
    nodes), fully correlated: node ↔ pool ↔ virtual server ↔ monitor ↔
-   iRule/policy references, statuses, traffic and verdict. `VS iRules`
-   lists the iRules attached to the row's virtual servers; `iRule refs`
-   lists the iRules that statically select the row's pool (`pool X`).
-3. **Orphan Nodes** · 4. **Orphan-Inactive Pools** · 5. **Inactive
-   Virtual Servers** (with the attached `iRules`) — filtered views with
-   informational `tmsh` commands for the change request.
+   iRule/policy references, statuses, traffic and verdict. Two columns
+   concern iRules and are not expected to match: `VS iRules` is
+   configuration (the iRules attached to the row's virtual servers — in
+   F5, iRules only attach to virtual servers), while `iRules selecting
+   pool` is code analysis (every iRule whose Tcl contains `pool <this
+   pool>`, whichever virtual server it is attached to). The latter, with
+   `Policies forwarding to pool`, is the evidence that keeps a pool with no
+   default-pool reference from being `ORPHAN`.
+3. **Orphan Nodes** · 4. **Orphan-Inactive Pools** (with the same
+   `iRules selecting pool` / `Policies forwarding to pool` evidence
+   columns) · 5. **Inactive Virtual Servers** (with the attached
+   `iRules`) — filtered views with informational `tmsh` commands for the
+   change request.
 6. **Dead Chains** — one row per pool with an
    `OFFLINE (decommission candidate)` verdict, grouping the whole chain
    (virtual servers → pool → member nodes) with per-object verdicts and
