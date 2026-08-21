@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 
 from f5audit.analyzer import Analyzer, Verdict
 from f5audit.correlator import correlate
-from f5audit.models import PoolMember
+from f5audit.models import IRule, PoolMember
 from f5audit.parsing import parse_collection
 from f5audit.report import build_tables, default_report_name, write_csv, write_xlsx
 from tests.conftest import build_collection
@@ -115,6 +115,31 @@ def test_dead_chains_sheet_omits_node_command_when_alive_elsewhere():
     commands = row[-1].splitlines()
     assert "tmsh delete ltm node /Common/node-dead" not in commands
     assert "tmsh delete ltm pool /Common/pool-dead" in commands
+
+
+def test_dead_chains_sheet_keeps_capped_pool_without_pool_command():
+    parsed = parse_collection(build_collection())
+    parsed.irules["/Common/irule-dyn"] = IRule(
+        full_path="/Common/irule-dyn",
+        partition="Common",
+        name="irule-dyn",
+        definition="pool $x",
+        has_dynamic_pool_selection=True,
+    )
+    parsed.virtuals["/Common/vs-web"].irules.append("/Common/irule-dyn")
+    correlation = correlate(parsed)
+    analysis = Analyzer(parsed, correlation).run()
+    tables = build_tables(parsed, correlation, analysis)
+    rows = tables["dead_chains"].rows
+    assert [row[0] for row in rows] == ["/Common/pool-dead"]
+    row = rows[0]
+    assert row[9] == Verdict.MANUAL_REVIEW
+    assert row[5] == Verdict.OFFLINE_CANDIDATE  # node verdict
+    commands = row[-1].splitlines()
+    assert commands == [
+        "tmsh delete ltm virtual /Common/vs-dead",
+        "tmsh delete ltm node /Common/node-dead",
+    ]
 
 
 def test_summary_contains_system_info_and_counts():

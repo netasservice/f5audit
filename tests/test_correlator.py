@@ -108,10 +108,6 @@ def test_dynamic_irule_reach_is_scoped_by_partition():
     assert correlation.dynamic_irules_for_pool("/PartA/pool-p") == {irule.full_path}
     assert correlation.dynamic_irules_for_pool("/Common/pool-orphan") == {irule.full_path}
     assert correlation.dynamic_irules_for_pool("/PartB/pool-p") == set()
-    # Nodes inherit the reach of their pools.
-    assert correlation.dynamic_irules_for_node("/PartA/node-p") == {irule.full_path}
-    assert correlation.dynamic_irules_for_node("/PartB/node-p") == set()
-    assert correlation.dynamic_irules_for_node("/Common/node-orphan") == set()
 
 
 def test_dynamic_irule_literal_path_extends_reach_to_other_partition():
