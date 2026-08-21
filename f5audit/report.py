@@ -333,7 +333,9 @@ def _build_dead_chains(
 ) -> ReportTable:
     """One row per dead chain, grouped by pool: the artifact to take to the
     config owner. Commands are informational text, ordered VS -> pool ->
-    nodes, and a node alive in another pool gets no delete line."""
+    nodes; only objects with an OFFLINE verdict get a delete line, so a
+    pool capped at MANUAL REVIEW by dynamic iRules, or a node alive in
+    another pool, is listed without one."""
     headers = [
         "Pool",
         "Partition",
@@ -349,9 +351,8 @@ def _build_dead_chains(
         "Suggested commands (informational)",
     ]
     table = ReportTable("Dead Chains", headers, verdict_column=9)
-    for path, verdict in sorted(analysis.pool_verdicts.items()):
-        if verdict.verdict != Verdict.OFFLINE_CANDIDATE:
-            continue
+    for path in sorted(analysis.offline_pools):
+        verdict = analysis.pool_verdicts[path]
         pool = parsed.pools[path]
         vs_paths = sorted(vs for vs, pools in correlation.virtual_to_pools.items() if path in pools)
         node_paths = sorted({member.node_full_path for member in pool.members})
@@ -367,7 +368,8 @@ def _build_dead_chains(
             vs_verdict_labels.append(label)
             if label == Verdict.OFFLINE_CANDIDATE:
                 commands.append(f"tmsh delete ltm virtual {vs_path}")
-        commands.append(f"tmsh delete ltm pool {path}")
+        if verdict.verdict == Verdict.OFFLINE_CANDIDATE:
+            commands.append(f"tmsh delete ltm pool {path}")
         node_verdict_labels = []
         for node_path in node_paths:
             node_verdict = analysis.node_verdicts.get(node_path)

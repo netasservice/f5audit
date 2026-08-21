@@ -274,12 +274,14 @@ def test_pool_not_dead_without_pool_stats():
     assert result.pool_verdicts["/Common/pool-dead"].verdict != Verdict.OFFLINE_CANDIDATE
 
 
-def test_dynamic_irules_cap_dead_pool_and_node_at_manual_review():
+def test_dynamic_irules_cap_dead_pool_but_not_its_dead_node():
     result = analyze(mutate=attach_dynamic_irule)
     pool_verdict = result.pool_verdicts["/Common/pool-dead"]
     assert pool_verdict.verdict == Verdict.MANUAL_REVIEW
     assert "Pool offline" in pool_verdict.notes
-    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.MANUAL_REVIEW
+    assert "/Common/pool-dead" in result.offline_pools
+    # Dynamic iRules pick pools, not nodes: the dead member stays OFFLINE.
+    assert result.node_verdicts["/Common/node-dead"].verdict == Verdict.OFFLINE_CANDIDATE
     assert any(
         item.object_type == "pool" and item.full_path == "/Common/pool-dead"
         for item in result.manual_review

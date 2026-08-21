@@ -72,13 +72,6 @@ class Correlation:
     def dynamic_irules_for_pool(self, pool_path: str) -> set[str]:
         return self.pool_dynamic_irules.get(pool_path, set())
 
-    def dynamic_irules_for_node(self, node_path: str) -> set[str]:
-        """A node is only reachable through its pools."""
-        irules: set[str] = set()
-        for pool_path in self.node_to_pools.get(node_path, set()):
-            irules |= self.dynamic_irules_for_pool(pool_path)
-        return irules
-
     def pool_static_references(self, pool_path: str) -> set[str]:
         refs: set[str] = set()
         refs |= self.pool_to_virtuals.get(pool_path, set())

@@ -68,6 +68,10 @@ class AnalysisResult:
     manual_review: list[ManualReviewItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     stats_analysis_skipped: bool = False
+    # Pools whose whole chain is monitor-offline, whatever verdict that
+    # evidence finally received (OFFLINE, or its MANUAL REVIEW / standby
+    # degradation). Drives the Dead Chains sheet.
+    offline_pools: set[str] = field(default_factory=set)
 
     def verdict_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -179,7 +183,11 @@ class Analyzer:
                         "node",
                         path,
                         evidence,
-                        dynamic_irules=self.correlation.dynamic_irules_for_node(path),
+                        # Dynamic iRules select pools, never nodes, and do
+                        # not change pool membership: removing a down member
+                        # from a dead pool alters nothing at runtime. The
+                        # cap belongs to the pool verdict only.
+                        dynamic_irules=set(),
                     ):
                         continue
                 elif node.availability == "offline":
@@ -374,6 +382,7 @@ class Analyzer:
                     dynamic_irules=self.correlation.dynamic_irules_for_pool(path),
                 )
                 if emitted:
+                    result.offline_pools.add(path)
                     continue
 
             # Referenced pool: inactive if every attached VS has zero traffic.
