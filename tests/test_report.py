@@ -41,16 +41,18 @@ def test_inventory_has_member_rows_and_orphan_node_rows():
     assert "/Common/node-orphan" in first_column  # node without pool
 
     member_row = next(
-        r for r in inventory.rows if r[0] == "/Common/node-web-1" and r[4] == "/Common/pool-web"
+        r for r in inventory.rows if r[0] == "/Common/node-web-1" and r[5] == "/Common/pool-web"
     )
     assert member_row[1] == "10.0.0.1"
-    assert member_row[5] == "80"
-    assert "/Common/vs-web" in member_row[9]
-    assert member_row[13] == "/Common/irule-static"  # iRules attached to the VS
-    assert member_row[16] == Verdict.IN_USE
+    assert member_row[4] == Verdict.IN_USE  # node verdict
+    assert member_row[6] == "80"
+    assert "/Common/vs-web" in member_row[10]
+    assert member_row[14] == "/Common/irule-static"  # iRules attached to the VS
+    assert member_row[17] == Verdict.IN_USE  # pool verdict
 
     orphan_row = next(r for r in inventory.rows if r[0] == "/Common/node-orphan")
-    assert orphan_row[16] == Verdict.ORPHAN
+    assert orphan_row[4] == Verdict.ORPHAN
+    assert orphan_row[17] == Verdict.ORPHAN
 
 
 def test_orphan_sheets_only_contain_non_in_use_objects():
@@ -140,6 +142,26 @@ def test_dead_chains_sheet_keeps_capped_pool_without_pool_command():
         "tmsh delete ltm virtual /Common/vs-dead",
         "tmsh delete ltm node /Common/node-dead",
     ]
+
+
+def test_inventory_shows_node_and_pool_verdicts_separately():
+    """A dead node in a pool capped by dynamic iRules: node OFFLINE, pool
+    MANUAL REVIEW, both visible on the same row."""
+    parsed = parse_collection(build_collection())
+    parsed.irules["/Common/irule-dyn"] = IRule(
+        full_path="/Common/irule-dyn",
+        partition="Common",
+        name="irule-dyn",
+        definition="pool $x",
+        has_dynamic_pool_selection=True,
+    )
+    parsed.virtuals["/Common/vs-web"].irules.append("/Common/irule-dyn")
+    correlation = correlate(parsed)
+    analysis = Analyzer(parsed, correlation).run()
+    tables = build_tables(parsed, correlation, analysis)
+    row = next(r for r in tables["inventory"].rows if r[0] == "/Common/node-dead")
+    assert row[4] == Verdict.OFFLINE_CANDIDATE
+    assert row[17] == Verdict.MANUAL_REVIEW
 
 
 def test_summary_contains_system_info_and_counts():

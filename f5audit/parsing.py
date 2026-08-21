@@ -37,10 +37,11 @@ STATIC_POOL_RE = re.compile(r'(?<!:)\bpool\s+"?(/?[\w.-]+(?:/[\w.-]+)*)"?')
 _QUOTED_POOL_ARG_RE = re.compile(r'(?<!:)(\bpool\s+)"([^"]*)"')
 _STRING_LITERAL_RE = re.compile(r'"[^"]*"')
 # Dynamic selection that cannot be resolved statically: 'pool $var',
-# 'pool [expr ...]' / 'pool [class match ...]'.
+# 'pool [expr ...]' / 'pool [class match -value ...]'. A datagroup lookup
+# is only dynamic when its value reaches the pool command this way; a
+# 'class match' used as an if-condition followed by 'pool literal' is a
+# static reference, not a dynamic one.
 DYNAMIC_POOL_RE = re.compile(r"(?<!:)\bpool\s+[\[$]")
-CLASS_MATCH_RE = re.compile(r"\bclass\s+match\b")
-POOL_KEYWORD_RE = re.compile(r"(?<!:)\bpool\b")
 
 # Monitor strings look like '/Common/http', '/Common/http and /Common/tcp',
 # or 'min 1 of { /Common/http /Common/tcp }'.
@@ -95,30 +96,23 @@ def _strip_string_literals(line: str) -> str:
 def analyze_irule_tcl(definition: str, partition: str) -> tuple[list[str], bool]:
     """Return (static_pool_refs, has_dynamic_pool_selection) for Tcl code.
 
-    Commented lines are ignored. A 'class match' (datagroup lookup)
-    combined with any pool command is treated as dynamic, since the
-    selected pool cannot be resolved statically.
+    Commented lines are ignored. A pool command is dynamic when its
+    argument is a variable or a command substitution; every other pool
+    command is a static reference to a literal name.
     """
     static_refs: list[str] = []
     dynamic = False
-    saw_class_match = False
-    saw_pool_keyword = False
     for line in (definition or "").splitlines():
         if COMMENT_LINE_RE.match(line):
             continue
+        # Unquote first so that 'pool "$var"' is seen as dynamic too.
+        line = _strip_string_literals(line)
         if DYNAMIC_POOL_RE.search(line):
             dynamic = True
-        if CLASS_MATCH_RE.search(line):
-            saw_class_match = True
-        line = _strip_string_literals(line)
-        if POOL_KEYWORD_RE.search(line):
-            saw_pool_keyword = True
         for match in STATIC_POOL_RE.finditer(line):
             ref = normalize_ref(match.group(1), partition)
             if ref and ref not in static_refs:
                 static_refs.append(ref)
-    if saw_class_match and saw_pool_keyword:
-        dynamic = True
     return static_refs, dynamic
 
 
