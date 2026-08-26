@@ -6,6 +6,7 @@ selection) and the flattening of BIG-IP stats documents.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from .models import (
     IRule,
     Monitor,
     Node,
+    NodeNetworkInfo,
     Policy,
     Pool,
     PoolMember,
@@ -142,6 +144,101 @@ def flatten_stats(raw: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     return result
 
 
+# --- Network context (ARP table + self-IP subnets) ------------------------
+
+
+def iter_stats_entries(raw: dict[str, Any] | None):
+    """Yield each nestedStats entries dict of an F5 stats document.
+
+    Unlike flatten_stats, no keying is attempted: dynamic ARP entries
+    carry no tmName and are keyed by IP-ish URL fragments.
+    """
+    for wrapper in ((raw or {}).get("entries") or {}).values():
+        entries = (wrapper.get("nestedStats") or {}).get("entries") or {}
+        if entries:
+            yield entries
+
+
+# An unresolved ARP entry is not evidence that the host exists.
+_ARP_ABSENT_STATUSES = {"incomplete", "down", "unresolved"}
+
+
+def _split_route_domain(address: str) -> tuple[str, str]:
+    """'10.0.0.1%2' -> ('10.0.0.1', '2'); no suffix means route domain 0."""
+    ip_part, _, route_domain = address.partition("%")
+    return ip_part, route_domain or "0"
+
+
+def _parse_arp_map(data: CollectionData) -> dict[str, str]:
+    """Map address -> MAC from the dynamic ARP stats plus static entries.
+
+    Dynamic ARP stats use tmctl-style field names (addr, hwaddr,
+    expire-in-sec); entries without an address are skipped rather than
+    trusted.
+    """
+    arp_map: dict[str, str] = {}
+    for entries in iter_stats_entries(data.get("net_arp_stats")):
+        address = stat_value(entries, "addr")
+        status = str(stat_value(entries, "status", "") or "").lower()
+        if not address or status in _ARP_ABSENT_STATUSES:
+            continue
+        arp_map[str(address)] = str(stat_value(entries, "hwaddr", "") or "")
+    for item in data.get("net_arp") or []:
+        address = item.get("ipAddress")
+        if address and address not in arp_map:
+            arp_map[address] = item.get("macAddress", "")
+    return arp_map
+
+
+def _parse_self_networks(data: CollectionData) -> list[tuple[str, Any]]:
+    """[(route_domain, ip_network)] from self-IPs ('10.0.0.5%2/24')."""
+    networks: list[tuple[str, Any]] = []
+    for item in data.get("net_self") or []:
+        address = item.get("address", "")
+        if "/" not in address:
+            continue
+        ip_part, _, prefix = address.rpartition("/")
+        ip_part, route_domain = _split_route_domain(ip_part)
+        try:
+            network = ipaddress.ip_interface(f"{ip_part}/{prefix}").network
+        except ValueError:
+            logger.debug("Skipping malformed self-IP address: %s", address)
+            continue
+        networks.append((route_domain, network))
+    return networks
+
+
+def connectivity_note(
+    address: str,
+    arp_map: dict[str, str],
+    self_networks: list[tuple[str, Any]],
+    self_data_present: bool,
+) -> tuple[str, str]:
+    """Classify one node address: (arp_mac, human-readable note).
+
+    Informational only — ARP absence means "not seen at collection
+    time", never "gone", so this feeds report columns, not verdicts.
+    """
+    ip_part, route_domain = _split_route_domain(address)
+    mac = arp_map.get(address)
+    if mac is None and route_domain == "0":
+        mac = arp_map.get(ip_part)
+    if mac:
+        return mac, f"in ARP table (MAC {mac})"
+    try:
+        node_ip = ipaddress.ip_address(ip_part)
+    except ValueError:
+        return "", "FQDN node (no IP to check)"
+    if node_ip.version == 6:
+        return "", "IPv6 address (not analyzed)"
+    if not self_data_present:
+        return "", "self-IP data unavailable; connectivity not classified"
+    for self_route_domain, network in self_networks:
+        if self_route_domain == route_domain and node_ip in network:
+            return "", "on local subnet, no ARP entry (idle or down)"
+    return "", "not directly connected (behind a router)"
+
+
 # --- Parsed aggregate -----------------------------------------------------
 
 
@@ -154,6 +251,8 @@ class ParsedData:
     irules: dict[str, IRule] = field(default_factory=dict)
     policies: dict[str, Policy] = field(default_factory=dict)
     monitors: dict[str, Monitor] = field(default_factory=dict)
+    network: dict[str, NodeNetworkInfo] = field(default_factory=dict)  # keyed by node address
+    network_collected: bool = False  # False => raw cache without net_* datasets
 
 
 def _iter_partition_items(data: CollectionData, prefix: str):
@@ -176,6 +275,7 @@ def parse_collection(data: CollectionData) -> ParsedData:
     _parse_irules(data, parsed)
     _parse_policies(data, parsed)
     _parse_monitors(data, parsed)
+    _parse_network(data, parsed)
     return parsed
 
 
@@ -229,6 +329,7 @@ def _parse_system(data: CollectionData) -> SystemInfo:
         set(data.meta.get("missing_endpoints") or [])
         | {entry.get("endpoint", "") for entry in denied}
     )
+    info.resumed_at = list(data.meta.get("resumed_at") or [])
     return info
 
 
@@ -250,6 +351,24 @@ def _parse_nodes(data: CollectionData, parsed: ParsedData) -> None:
             node.availability = stat_value(entries, "status.availabilityState", "") or ""
             node.monitor_status = stat_value(entries, "monitorStatus", "") or ""
         parsed.nodes[full_path] = node
+
+
+def _parse_network(data: CollectionData, parsed: ParsedData) -> None:
+    parsed.network_collected = any(
+        data.get(key) is not None for key in ("net_arp_stats", "net_self", "net_arp")
+    )
+    if not parsed.network_collected:
+        return
+    arp_map = _parse_arp_map(data)
+    self_networks = _parse_self_networks(data)
+    self_data_present = data.get("net_self") is not None
+    for node in parsed.nodes.values():
+        if not node.address or node.address in parsed.network:
+            continue
+        mac, note = connectivity_note(node.address, arp_map, self_networks, self_data_present)
+        parsed.network[node.address] = NodeNetworkInfo(
+            address=node.address, arp_mac=mac, connectivity=note
+        )
 
 
 def _parse_pool_member(

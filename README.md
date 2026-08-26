@@ -69,6 +69,15 @@ f5audit analyze --from-raw ./raw/ --out report.xlsx
 F5 again**. This is the recommended workflow: one collection per session,
 all further analysis offline.
 
+**Resumable collection**: pointing `--save-raw` at a directory that
+already contains raw JSON fetches **only the missing datasets** — use it
+to resume an aborted collection, or to top up an old cache with data a
+newer version collects (e.g. the ARP/self-IP tables). Whatever failed
+previously has no file and is retried once; whatever succeeded is never
+re-fetched. Note the resulting cache mixes collection times (flagged on
+the Summary sheet); for a fully time-consistent snapshot, use a fresh
+directory.
+
 ### One-step alternative
 
 ```
@@ -118,6 +127,11 @@ with warnings (standby device, denied partitions, missing endpoints).
   state at collection time and may mean maintenance rather than
   decommissioning. Always confirm with the config owner before requesting
   deletion.
+- The ARP table is also point-in-time and **per-unit**: "no ARP entry"
+  on a local subnet means the host was idle (or down) at collection time
+  — dynamic entries expire after minutes of silence — and on a standby
+  unit the table reflects that unit, not the pair. The network columns
+  are informational context, never a verdict input.
 
 ## Report sheets
 
@@ -125,7 +139,8 @@ with warnings (standby device, denied partitions, missing endpoints).
    verdict counts, active warnings.
 2. **Inventory** — one row per pool member (plus rows for pool-less
    nodes), fully correlated: node ↔ pool ↔ virtual server ↔ monitor ↔
-   iRule/policy references, statuses and traffic. Each row carries both
+   iRule/policy references, statuses and traffic, plus the network
+   context columns described below. Each row carries both
    the `Node verdict` and the (colored) `Pool verdict` with its notes,
    since a node can be `OFFLINE` inside a pool held at `MANUAL REVIEW`.
    Two columns
@@ -155,6 +170,25 @@ with warnings (standby device, denied partitions, missing endpoints).
 
 Color coding: red = ORPHAN · yellow = MANUAL REVIEW / UNRELIABLE ·
 orange = INACTIVE · purple = OFFLINE · green = IN USE.
+
+### Network context columns (Inventory, Orphan Nodes)
+
+Every collection also reads the F5's own network tables — self-IPs
+(`net/self`), the static ARP entries (`net/arp`) and the dynamic ARP
+table (`net/arp/stats`), all plain GETs — and appends two informational
+columns per node:
+
+- **ARP MAC** — the node's MAC address when it appears in the ARP table.
+- **Network note** — one of: `in ARP table (MAC ...)` (the host answered
+  ARP recently, so it existed at collection time); `on local subnet, no
+  ARP entry (idle or down)` (directly connected per the self-IP subnets,
+  but silent); `not directly connected (behind a router)` (the F5 would
+  never have an ARP entry for it); or a degradation note (FQDN node,
+  IPv6 address, self-IP data unavailable, `network data not collected`
+  for caches from older versions).
+
+An orphan node that is also absent from ARP makes a safer deletion
+conversation — but these columns never change a verdict.
 
 ## Development
 

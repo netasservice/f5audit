@@ -186,7 +186,10 @@ cannot do the job.
 
 Development happens offline. The expected loop is: **one** `collect --save-raw` per
 session against the live F5, then N iterations of `analyze --from-raw` against that
-cache. Do not point a dev loop at the production management interface — every iteration
+cache. Collection is resumable: `collect --save-raw` pointed at an existing raw
+directory fetches only the datasets that have no file (resume an aborted run, top up
+an old cache), which is also the cheap way to backfill newly collected endpoints
+without a full re-collection. Do not point a dev loop at the production management interface — every iteration
 is load on a plane that also carries HA heartbeats and admin access.
 
 Before the first collection on a new device, run `f5audit validate` and read the

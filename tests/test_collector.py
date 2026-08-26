@@ -58,6 +58,9 @@ def minimal_responses():
         "/mgmt/tm/ltm/virtual/stats": {},
         "/mgmt/tm/ltm/pool/stats": {},
         "/mgmt/tm/ltm/node/stats": {},
+        "/mgmt/tm/net/self": load_fixture("net_self.json"),
+        "/mgmt/tm/net/arp": load_fixture("net_arp.json"),
+        "/mgmt/tm/net/arp/stats": load_fixture("net_arp_stats.json"),
     }
 
 
@@ -73,6 +76,30 @@ def test_collect_gathers_expected_datasets():
     assert "ltm_monitor_mysql@Common" not in data.datasets
     assert "/mgmt/tm/ltm/monitor/mysql" not in data.meta["missing_endpoints"]
     assert data.get("ltm_monitor_http@Common")
+
+
+def test_collect_gathers_network_datasets():
+    collector = Collector(FakeClient(minimal_responses()))
+    data = collector.collect()
+
+    assert data.get("net_self")
+    assert data.get("net_arp")
+    assert data.get("net_arp_stats")
+    # NDP is not served by the fake (404) and is tolerated silently.
+    assert "net_ndp_stats" not in data.datasets
+    assert "/mgmt/tm/net/ndp/stats" not in data.meta["missing_endpoints"]
+    assert data.meta["aborted"] is None
+
+
+def test_collect_tolerates_denied_network_endpoints():
+    responses = minimal_responses()
+    responses["/mgmt/tm/net/arp/stats"] = F5APIError(403, "/mgmt/tm/net/arp/stats")
+    collector = Collector(FakeClient(responses))
+    data = collector.collect()
+
+    assert "net_arp_stats" not in data.datasets
+    assert any(entry["endpoint"] == "/mgmt/tm/net/arp/stats" for entry in data.meta["denied"])
+    assert data.meta["aborted"] is None
 
 
 def test_collect_records_403_as_denied():
@@ -135,3 +162,73 @@ def test_raw_files_carry_timestamp(tmp_path):
 def test_load_from_raw_empty_dir_errors(tmp_path):
     with pytest.raises(F5ClientError):
         load_from_raw(str(tmp_path))
+
+
+def test_resumed_collection_fetches_only_missing_datasets(tmp_path):
+    # First run against a device where the net/* endpoints do not exist:
+    # the raw cache ends up without the network datasets.
+    responses = minimal_responses()
+    partial = {
+        path: data for path, data in responses.items() if not path.startswith("/mgmt/tm/net/")
+    }
+    first = Collector(FakeClient(partial), raw_store=RawStore(str(tmp_path)))
+    first_data = first.collect()
+    assert "net_self" not in first_data.datasets
+
+    # Second run resumes from the same directory: only the gaps are fetched.
+    client = FakeClient(responses)
+    second = Collector(
+        client, raw_store=RawStore(str(tmp_path)), resume_data=load_from_raw(str(tmp_path))
+    )
+    data = second.collect()
+
+    assert {p for p in client.requested if p.startswith("/mgmt/tm/net/")} == {
+        "/mgmt/tm/net/self",
+        "/mgmt/tm/net/arp",
+        "/mgmt/tm/net/arp/stats",
+        "/mgmt/tm/net/ndp/stats",
+    }
+    # Datasets that already have a file are never re-fetched.
+    assert "/mgmt/tm/sys/version" not in client.requested
+    assert "/mgmt/tm/ltm/node" not in client.requested
+    assert "/mgmt/tm/ltm/pool/~Common~pool-web/members" not in client.requested
+    assert data.get("net_self")
+    assert data.get("sys_version")  # carried over from the first run
+    assert data.meta["aborted"] is None
+
+
+def test_resumed_collection_keeps_original_timestamp_and_records_resume(tmp_path):
+    first = Collector(FakeClient(minimal_responses()), raw_store=RawStore(str(tmp_path)))
+    first_data = first.collect()
+
+    second = Collector(
+        FakeClient(minimal_responses()),
+        raw_store=RawStore(str(tmp_path)),
+        resume_data=load_from_raw(str(tmp_path)),
+    )
+    data = second.collect()
+
+    assert data.meta["collected_at"] == first_data.meta["collected_at"]
+    assert len(data.meta["resumed_at"]) == 1
+    # Gaps from the previous run are re-evaluated, not inherited.
+    assert data.meta["denied"] == []
+    assert data.meta["aborted"] is None
+
+
+def test_resumed_collection_retries_previous_failures(tmp_path):
+    responses = minimal_responses()
+    responses["/mgmt/tm/ltm/rule"] = F5APIError(403, "/mgmt/tm/ltm/rule")
+    first = Collector(FakeClient(responses), raw_store=RawStore(str(tmp_path)))
+    first_data = first.collect()
+    assert "ltm_rule@Common" not in first_data.datasets
+
+    # Permissions fixed: the resumed run fills the gap and clears 'denied'.
+    client = FakeClient(minimal_responses())
+    second = Collector(
+        client, raw_store=RawStore(str(tmp_path)), resume_data=load_from_raw(str(tmp_path))
+    )
+    data = second.collect()
+
+    assert "/mgmt/tm/ltm/rule" in client.requested
+    assert data.get("ltm_rule@Common") == []
+    assert data.meta["denied"] == []

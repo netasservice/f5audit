@@ -109,17 +109,35 @@ class RawStore:
 class Collector:
     """Runs the full read-only collection against a BIG-IP."""
 
-    def __init__(self, client: F5ReadOnlyClient, raw_store: RawStore | None = None):
+    def __init__(
+        self,
+        client: F5ReadOnlyClient,
+        raw_store: RawStore | None = None,
+        *,
+        resume_data: CollectionData | None = None,
+    ):
         self.client = client
         self.raw_store = raw_store
         self.data = CollectionData()
+        now = datetime.now(timezone.utc).isoformat()
+        previous_meta = resume_data.meta if resume_data else {}
+        if resume_data:
+            self.data.datasets = dict(resume_data.datasets)
         self.data.meta = {
-            "collected_at": datetime.now(timezone.utc).isoformat(),
+            # A resumed run keeps the original timestamp; per-file
+            # timestamps in the RawStore record when each dataset landed.
+            "collected_at": previous_meta.get("collected_at") or now,
             "host": getattr(client, "_host", ""),
             "denied": [],  # [{"partition": ..., "endpoint": ...}]
             "missing_endpoints": [],  # ["ltm/virtual/stats", ...]
             "aborted": None,
         }
+        if resume_data:
+            # Gaps are re-evaluated: what failed before has no dataset and
+            # gets one fresh attempt; what succeeded is skipped in _fetch.
+            resumed_at = list(previous_meta.get("resumed_at") or [])
+            resumed_at.append(now)
+            self.data.meta["resumed_at"] = resumed_at
 
     # ------------------------------------------------------------------
 
@@ -143,7 +161,13 @@ class Collector:
         403 -> recorded (denied partition or missing endpoint), returns None.
         404 -> returns None silently when tolerated (e.g. monitor types),
                otherwise recorded as a missing endpoint.
+
+        A dataset seeded from a previous run (resume) is never re-fetched:
+        pointing --save-raw at an existing cache only fills the gaps.
         """
+        if self.data.datasets.get(key) is not None:
+            logger.debug("Skipping %s (already collected)", key)
+            return self.data.datasets[key]
         try:
             if collection:
                 data: Any = self.client.get_collection(api_path, params=params)
@@ -179,6 +203,7 @@ class Collector:
             self._collect_policy_rules()
             self._collect_monitors(partitions)
             self._collect_stats()
+            self._collect_network()
         except F5ClientError as exc:
             self.data.meta["aborted"] = str(exc)
             logger.error(
@@ -297,6 +322,19 @@ class Collector:
         self._fetch("ltm_virtual_stats", "/mgmt/tm/ltm/virtual/stats", collection=False)
         self._fetch("ltm_pool_stats", "/mgmt/tm/ltm/pool/stats", collection=False)
         self._fetch("ltm_node_stats", "/mgmt/tm/ltm/node/stats", collection=False)
+
+    def _collect_network(self) -> None:
+        """L2/L3 context for the report: self-IP subnets and the ARP
+        table (dynamic entries live under /stats, static under the plain
+        collection). All tolerant: a denied or missing endpoint degrades
+        the network columns, never the audit. NDP (IPv6 neighbors) is
+        cached for future use but not parsed yet.
+        """
+        logger.info("Collecting network tables (self-IPs, ARP)...")
+        self._fetch("net_self", "/mgmt/tm/net/self", tolerate_404=True)
+        self._fetch("net_arp", "/mgmt/tm/net/arp", tolerate_404=True)
+        self._fetch("net_arp_stats", "/mgmt/tm/net/arp/stats", collection=False, tolerate_404=True)
+        self._fetch("net_ndp_stats", "/mgmt/tm/net/ndp/stats", collection=False, tolerate_404=True)
 
 
 def load_from_raw(directory: str) -> CollectionData:

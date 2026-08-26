@@ -23,6 +23,15 @@ class Node:
 
 
 @dataclass
+class NodeNetworkInfo:
+    """L2/L3 context for one node address (informational, never a verdict)."""
+
+    address: str
+    arp_mac: str = ""
+    connectivity: str = ""  # human-readable note for the report
+
+
+@dataclass
 class PoolMember:
     node_full_path: str
     port: str
@@ -102,3 +111,4 @@ class SystemInfo:
     partitions_collected: list[str] = field(default_factory=list)
     partitions_denied: list[str] = field(default_factory=list)
     missing_endpoints: list[str] = field(default_factory=list)
+    resumed_at: list[str] = field(default_factory=list)  # resumed-collection timestamps

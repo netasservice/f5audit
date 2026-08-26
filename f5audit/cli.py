@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from . import __version__
 from .analyzer import Analyzer
@@ -156,10 +157,33 @@ def _build_client(args) -> F5ReadOnlyClient:
     )
 
 
+def _load_resume_data(save_raw_dir: str | None) -> CollectionData | None:
+    """Reuse an existing raw cache so only the missing datasets are
+    fetched (top up an old cache, resume an aborted run). A fresh or
+    empty directory means a full collection."""
+    if not save_raw_dir:
+        return None
+    directory = Path(save_raw_dir)
+    if not directory.is_dir() or not any(directory.glob("*.json")):
+        return None
+    try:
+        resume_data = load_from_raw(save_raw_dir)
+    except F5ClientError as exc:
+        print(f"Warning: could not reuse raw cache in {save_raw_dir}: {exc}", file=sys.stderr)
+        return None
+    print(
+        f"Resuming collection: reusing {len(resume_data.datasets)} existing "
+        f"datasets from {save_raw_dir} (use a new --save-raw directory for a "
+        "full, time-consistent collection)."
+    )
+    return resume_data
+
+
 def _collect(args, save_raw_dir: str | None) -> CollectionData:
     client = _build_client(args)
+    resume_data = _load_resume_data(save_raw_dir)
     raw_store = RawStore(save_raw_dir) if save_raw_dir else None
-    collector = Collector(client, raw_store=raw_store)
+    collector = Collector(client, raw_store=raw_store, resume_data=resume_data)
     data = collector.collect()
     if save_raw_dir:
         print(f"Raw JSON saved to: {save_raw_dir}")
@@ -237,6 +261,8 @@ VALIDATE_PROBES = [
     ("ltm/rule", "/mgmt/tm/ltm/rule", {"$top": 1}),
     ("ltm/virtual/stats", "/mgmt/tm/ltm/virtual/stats", None),
     ("sys/failover", "/mgmt/tm/sys/failover", None),
+    ("net/self", "/mgmt/tm/net/self", {"$top": 1}),
+    ("net/arp/stats", "/mgmt/tm/net/arp/stats", None),
 ]
 
 

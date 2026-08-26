@@ -1,0 +1,28 @@
+{
+  "kind": "tm:net:arp:arpstats",
+  "selfLink": "https://localhost/mgmt/tm/net/arp/stats?ver=15.1.0",
+  "entries": {
+    "https://localhost/mgmt/tm/net/arp/10.0.0.1/stats": {
+      "nestedStats": {
+        "entries": {
+          "addr": {"description": "10.0.0.1"},
+          "hwaddr": {"description": "00:00:5e:00:53:01"},
+          "vlan": {"description": "/Common/internal"},
+          "expire-in-sec": {"value": 240},
+          "status": {"description": "resolved"}
+        }
+      }
+    },
+    "https://localhost/mgmt/tm/net/arp/10.0.0.33/stats": {
+      "nestedStats": {
+        "entries": {
+          "addr": {"description": "10.0.0.33"},
+          "hwaddr": {"description": "00:00:5e:00:53:21"},
+          "vlan": {"description": "/Common/internal"},
+          "expire-in-sec": {"value": 12},
+          "status": {"description": "incomplete"}
+        }
+      }
+    }
+  }
+}

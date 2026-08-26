@@ -164,6 +164,58 @@ def test_inventory_shows_node_and_pool_verdicts_separately():
     assert row[17] == Verdict.MANUAL_REVIEW
 
 
+def test_network_columns_are_appended_to_inventory_and_orphan_nodes():
+    _, tables = make_tables()
+    inventory = tables["inventory"]
+    assert inventory.headers[-2:] == ["ARP MAC", "Network note"]
+    assert inventory.verdict_column == 17  # unchanged by the appended columns
+
+    member_row = next(
+        r for r in inventory.rows if r[0] == "/Common/node-web-1" and r[5] == "/Common/pool-web"
+    )
+    assert member_row[-2] == "00:00:5e:00:53:01"
+    assert member_row[-1] == "in ARP table (MAC 00:00:5e:00:53:01)"
+
+    orphan_nodes = tables["orphan_nodes"]
+    assert orphan_nodes.headers[-2:] == ["ARP MAC", "Network note"]
+    assert orphan_nodes.verdict_column == 4
+    rows = {row[0]: row for row in orphan_nodes.rows}
+    # /26 self-IP: node-dead (10.0.0.50) is local, node-orphan (10.0.0.99) routed.
+    assert rows["/Common/node-dead"][-1] == "on local subnet, no ARP entry (idle or down)"
+    assert rows["/Common/node-orphan"][-1] == "not directly connected (behind a router)"
+
+
+def test_network_columns_degrade_on_old_raw_cache():
+    parsed = parse_collection(build_collection(network=False))
+    correlation = correlate(parsed)
+    analysis = Analyzer(parsed, correlation).run()
+    tables = build_tables(parsed, correlation, analysis)
+    row = next(r for r in tables["inventory"].rows if r[0] == "/Common/node-web-1")
+    assert row[-2:] == ["", "network data not collected"]
+    summary = {str(r[0]): r[1] for r in tables["summary"].rows}
+    assert summary["Network data (ARP/self-IP)"] == "not collected (old cache)"
+
+
+def test_network_note_carries_standby_annotation():
+    parsed = parse_collection(build_collection(standby=True))
+    correlation = correlate(parsed)
+    analysis = Analyzer(parsed, correlation).run()
+    tables = build_tables(parsed, correlation, analysis)
+    row = next(r for r in tables["inventory"].rows if r[0] == "/Common/node-web-1")
+    assert row[-1].endswith("[standby unit: ARP reflects this unit only]")
+
+
+def test_summary_reports_resumed_collection():
+    data = build_collection()
+    data.meta["resumed_at"] = ["2026-08-26T10:00:00+00:00"]
+    parsed = parse_collection(data)
+    correlation = correlate(parsed)
+    analysis = Analyzer(parsed, correlation).run()
+    tables = build_tables(parsed, correlation, analysis)
+    summary = {str(r[0]): r[1] for r in tables["summary"].rows}
+    assert summary["Collection resumed (mixed timestamps)"] == "2026-08-26T10:00:00+00:00"
+
+
 def test_summary_contains_system_info_and_counts():
     _, tables = make_tables()
     rows = {str(row[0]): row[1] for row in tables["summary"].rows}

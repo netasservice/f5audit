@@ -58,6 +58,25 @@ def _join(values) -> str:
     return ", ".join(sorted(values)) if values else ""
 
 
+def _network_cells(parsed: ParsedData, node) -> list[object]:
+    """[ARP MAC, Network note] appended at the end of node rows.
+
+    Informational only: ARP absence means "not seen at collection time",
+    and on a standby unit the table reflects that unit, not the pair.
+    """
+    if node is None:
+        return ["", ""]
+    if not parsed.network_collected:
+        return ["", "network data not collected"]
+    info = parsed.network.get(node.address)
+    if info is None:
+        return ["", ""]
+    note = info.connectivity
+    if note and parsed.system.failover_state == "standby":
+        note += " [standby unit: ARP reflects this unit only]"
+    return [info.arp_mac, note]
+
+
 def build_tables(
     parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
 ) -> dict[str, ReportTable]:
@@ -87,6 +106,10 @@ def _build_summary(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
         ["Partitions denied", _join(system.partitions_denied)],
         ["Missing endpoints", _join(system.missing_endpoints)],
         ["Traffic analysis skipped", "YES" if analysis.stats_analysis_skipped else "no"],
+        [
+            "Network data (ARP/self-IP)",
+            "collected" if parsed.network_collected else "not collected (old cache)",
+        ],
         ["", ""],
         ["Objects", ""],
         ["Nodes", len(parsed.nodes)],
@@ -98,6 +121,10 @@ def _build_summary(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
         ["", ""],
         ["Verdict counts", ""],
     ]
+    if system.resumed_at:
+        table.rows.insert(
+            6, ["Collection resumed (mixed timestamps)", ", ".join(system.resumed_at)]
+        )
     for verdict, count in sorted(analysis.verdict_counts().items()):
         table.rows.append([verdict, count])
     if analysis.warnings:
@@ -155,6 +182,8 @@ def _build_inventory(
         "Policies forwarding to pool",
         "Pool verdict",
         "Pool notes",
+        "ARP MAC",
+        "Network note",
     ]
     # One row per pool member: the colored verdict is the pool's, the node's
     # own verdict has its own column so the two are never confused.
@@ -196,6 +225,7 @@ def _build_inventory(
                     verdict.verdict if verdict else "",
                     verdict.notes if verdict else "",
                 ]
+                + _network_cells(parsed, node)
             )
 
     # Nodes that belong to no pool get their own rows.
@@ -226,6 +256,7 @@ def _build_inventory(
                 verdict.verdict if verdict else "",
                 verdict.notes if verdict else "",
             ]
+            + _network_cells(parsed, node)
         )
     return table
 
@@ -239,6 +270,8 @@ def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportT
         "Verdict",
         "Notes",
         "Suggested command (informational)",
+        "ARP MAC",
+        "Network note",
     ]
     table = ReportTable("Orphan Nodes", headers, verdict_column=4)
     for path, verdict in sorted(analysis.node_verdicts.items()):
@@ -255,6 +288,7 @@ def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportT
                 verdict.notes,
                 f"tmsh delete ltm node {path}" if verdict.verdict == Verdict.ORPHAN else "",
             ]
+            + _network_cells(parsed, node)
         )
     return table
 
