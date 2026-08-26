@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "tm:net:self:selfstate",
+    "name": "self-internal",
+    "partition": "Common",
+    "fullPath": "/Common/self-internal",
+    "address": "10.0.0.5/26",
+    "vlan": "/Common/internal",
+    "trafficGroup": "/Common/traffic-group-local-only",
+    "allowService": "none"
+  }
+]

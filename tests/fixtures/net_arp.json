@@ -1,0 +1,10 @@
+[
+  {
+    "kind": "tm:net:arp:arpstate",
+    "name": "static-gw",
+    "partition": "Common",
+    "fullPath": "/Common/static-gw",
+    "ipAddress": "10.0.0.62",
+    "macAddress": "00:00:5e:00:53:62"
+  }
+]

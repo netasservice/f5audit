@@ -16,9 +16,13 @@ def load_fixture(name):
 
 
 def build_collection(
-    *, standby: bool = False, denied=None, missing_endpoints=None
+    *, standby: bool = False, denied=None, missing_endpoints=None, network: bool = True
 ) -> CollectionData:
-    """Assemble a CollectionData equivalent to a full live collection."""
+    """Assemble a CollectionData equivalent to a full live collection.
+
+    network=False simulates a raw cache from before the net_* datasets
+    were collected.
+    """
     data = CollectionData()
     data.meta = {
         "collected_at": "2026-08-19T12:00:00+00:00",
@@ -52,6 +56,10 @@ def build_collection(
         "ltm_node_stats": load_fixture("node_stats.json"),
         "ltm_monitor_http@Common": load_fixture("monitors_http.json"),
     }
+    if network:
+        data.datasets["net_self"] = load_fixture("net_self.json")
+        data.datasets["net_arp"] = load_fixture("net_arp.json")
+        data.datasets["net_arp_stats"] = load_fixture("net_arp_stats.json")
     return data
 
 

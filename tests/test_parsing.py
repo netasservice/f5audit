@@ -1,13 +1,16 @@
 """Parsing tests: iRule Tcl analysis, name normalization, stats merge."""
 
 from f5audit.parsing import (
+    _parse_arp_map,
+    _parse_self_networks,
     analyze_irule_tcl,
+    connectivity_note,
     normalize_ref,
     parse_collection,
     parse_monitor_refs,
     split_member_name,
 )
-from tests.conftest import build_collection
+from tests.conftest import build_collection, load_fixture
 
 # ---------------------------------------------------------------------------
 # iRule Tcl analysis
@@ -230,3 +233,124 @@ def test_parse_collection_builds_models():
 def test_parse_collection_standby_state():
     parsed = parse_collection(build_collection(standby=True))
     assert parsed.system.failover_state == "standby"
+
+
+# ---------------------------------------------------------------------------
+# Network context (ARP table + self-IP subnets)
+# ---------------------------------------------------------------------------
+
+
+class _FakeData:
+    """Duck-typed CollectionData for the pure network parsers."""
+
+    def __init__(self, datasets):
+        self.datasets = datasets
+
+    def get(self, key, default=None):
+        return self.datasets.get(key, default)
+
+
+def test_parse_arp_map_merges_dynamic_and_static_entries():
+    arp_map = _parse_arp_map(
+        _FakeData(
+            {
+                "net_arp_stats": load_fixture("net_arp_stats.json"),
+                "net_arp": load_fixture("net_arp.json"),
+            }
+        )
+    )
+    assert arp_map["10.0.0.1"] == "00:00:5e:00:53:01"  # dynamic, resolved
+    assert arp_map["10.0.0.62"] == "00:00:5e:00:53:62"  # static entry
+    assert "10.0.0.33" not in arp_map  # incomplete entry is not presence
+
+
+def test_parse_arp_map_skips_entries_without_address():
+    raw = {
+        "entries": {
+            "https://localhost/mgmt/tm/net/arp/x/stats": {
+                "nestedStats": {"entries": {"hwaddr": {"description": "00:00:5e:00:53:99"}}}
+            }
+        }
+    }
+    assert _parse_arp_map(_FakeData({"net_arp_stats": raw, "net_arp": None})) == {}
+
+
+def test_parse_self_networks_handles_route_domains_and_malformed():
+    data = _FakeData(
+        {
+            "net_self": [
+                {"address": "10.0.0.5/26"},
+                {"address": "10.9.0.5%2/24"},
+                {"address": "not-an-ip/24"},
+                {"address": "10.9.9.9"},
+            ]
+        }
+    )
+    networks = _parse_self_networks(data)
+    assert [(rd, str(net)) for rd, net in networks] == [
+        ("0", "10.0.0.0/26"),
+        ("2", "10.9.0.0/24"),
+    ]
+
+
+def test_connectivity_note_classifications():
+    arp_map = {"10.0.0.1": "00:00:5e:00:53:01", "10.9.0.7%2": "00:00:5e:00:53:07"}
+    self_networks = _parse_self_networks(
+        _FakeData({"net_self": [{"address": "10.0.0.5/26"}, {"address": "10.9.0.5%2/24"}]})
+    )
+
+    mac, note = connectivity_note("10.0.0.1", arp_map, self_networks, True)
+    assert mac == "00:00:5e:00:53:01"
+    assert note == "in ARP table (MAC 00:00:5e:00:53:01)"
+
+    # Route-domain address matched by its exact configured string.
+    mac, note = connectivity_note("10.9.0.7%2", arp_map, self_networks, True)
+    assert mac == "00:00:5e:00:53:07"
+
+    # '%0' suffix falls back to the bare-IP ARP entry.
+    mac, _ = connectivity_note("10.0.0.1%0", arp_map, self_networks, True)
+    assert mac == "00:00:5e:00:53:01"
+
+    assert connectivity_note("10.0.0.50", arp_map, self_networks, True) == (
+        "",
+        "on local subnet, no ARP entry (idle or down)",
+    )
+    # Same IP range, different route domain: not the same L2 segment.
+    assert connectivity_note("10.0.0.50%2", arp_map, self_networks, True) == (
+        "",
+        "not directly connected (behind a router)",
+    )
+    assert connectivity_note("10.0.0.99", arp_map, self_networks, True) == (
+        "",
+        "not directly connected (behind a router)",
+    )
+    assert connectivity_note("10.0.0.50", arp_map, self_networks, False) == (
+        "",
+        "self-IP data unavailable; connectivity not classified",
+    )
+    assert connectivity_note("app.example.net", arp_map, self_networks, True) == (
+        "",
+        "FQDN node (no IP to check)",
+    )
+    assert connectivity_note("2001:db8::10", arp_map, self_networks, True) == (
+        "",
+        "IPv6 address (not analyzed)",
+    )
+
+
+def test_parse_collection_builds_network_info():
+    parsed = parse_collection(build_collection())
+    assert parsed.network_collected is True
+    info = parsed.network["10.0.0.1"]
+    assert info.arp_mac == "00:00:5e:00:53:01"
+    assert info.connectivity == "in ARP table (MAC 00:00:5e:00:53:01)"
+    # /26 self-IP: 10.0.0.50 is local, 10.0.0.99 is routed.
+    local_note = parsed.network["10.0.0.50"].connectivity
+    assert local_note == "on local subnet, no ARP entry (idle or down)"
+    assert parsed.network["10.0.0.99"].connectivity == "not directly connected (behind a router)"
+
+
+def test_parse_collection_without_network_datasets():
+    parsed = parse_collection(build_collection(network=False))
+    assert parsed.network_collected is False
+    assert parsed.network == {}
