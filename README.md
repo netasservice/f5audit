@@ -28,6 +28,13 @@ the report are informational text only; nothing is ever executed.
 - Management-plane friendly: sequential requests only, `$top`/`$skip`
   pagination, per-request delay (`--delay`, default 0.1 s), 30 s timeout,
   max 2 retries with exponential backoff.
+- The optional `ping` post-process is the sole SSH feature: opt-in,
+  separate from collection, and structurally ping-only — fixed command
+  templates, the only interpolated value is an `ipaddress`-validated
+  IPv4 literal, and non-ping commands are refused at runtime. Ping is
+  read-only ICMP; nothing on the device is created, modified, or
+  deleted. SSH host keys are auto-accepted (management-network tool,
+  same spirit as `--insecure`).
 
 ## Requirements
 
@@ -35,6 +42,8 @@ the report are informational text only; nothing is ever executed.
 - An account with a **read-only role** (Auditor/Guest) and iControl REST
   access on the BIG-IP
 - Network access to the management interface (TCP 443)
+- Only for the optional `ping` post-process: `pip install 'f5audit[ssh]'`
+  (paramiko) and SSH access (TCP 22) with an account that can run `ping`
 
 ## Installation
 
@@ -84,6 +93,42 @@ directory.
 f5audit analyze --host 192.0.2.1 --user auditor --insecure --save-raw ./raw/ --out report.xlsx
 ```
 
+### 3. Optional post-process: ping the removal candidates over SSH
+
+```
+pip install 'f5audit[ssh]'
+f5audit ping --report report.xlsx --host 192.0.2.1 --user auditor
+```
+
+Double-checks the removal candidates in an **already generated** report:
+a node with no ARP entry that also does not answer ping is a much safer
+deletion conversation. The command reads the `IP` column of the
+**Orphan Nodes** sheet — by construction the nodes that are *not*
+`IN USE`, so in-use nodes are never pinged — deduplicates the IPs (a
+node in several pools is pinged once), runs `ping` on the BIG-IP over
+SSH for each unique IPv4, and writes two columns into both the
+Inventory and Orphan Nodes sheets **in place**, replicating each IP's
+result across every row where it appears:
+
+| `Ping (from F5)` | Meaning |
+|---|---|
+| `YES` / `NO` | The node answered / did not answer ICMP from the F5 |
+| `UNKNOWN` | Ping output could not be parsed (raw excerpt in `Ping note`) |
+| `NOT TESTED` | Skipped: non-zero route domain, IPv6, FQDN node, or SSH failed mid-run |
+
+Notes:
+
+- Works with both Advanced-shell (bash) and tmsh-shell accounts — the
+  command form is auto-detected with one probe.
+- Password from `F5_PASS` or an interactive prompt, as everywhere else;
+  SSH keys/agent are also tried automatically.
+- Close the report in Excel first: if the file is locked, results are
+  saved to `<name>_ping.xlsx` instead of being lost.
+- Re-running overwrites the ping columns (never duplicates them).
+- Like ARP, ping is point-in-time evidence: `NO` means "did not answer
+  at that moment", not "gone". `--count` (default 2) echo requests are
+  sent per IP, sequentially.
+
 ### Options
 
 | Flag | Meaning |
@@ -95,6 +140,9 @@ f5audit analyze --host 192.0.2.1 --user auditor --insecure --save-raw ./raw/ --o
 | `--top` | Pagination page size (default 100) |
 | `--format xlsx\|csv` | Excel workbook or one CSV per sheet |
 | `--allow-standby` | On a standby unit, emit traffic- and availability-based verdicts marked `UNRELIABLE (standby)` instead of skipping them |
+| `--report` (`ping`) | Existing .xlsx report to annotate in place |
+| `--ssh-port` (`ping`) | SSH port (default 22) |
+| `--count` (`ping`) | Echo requests per IP (default 2) |
 
 Exit codes: `0` OK · `1` connection/auth error · `2` analysis completed
 with warnings (standby device, denied partitions, missing endpoints).
