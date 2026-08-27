@@ -39,6 +39,7 @@ Issues = "https://github.com/netcraftworks/f5audit/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.6"]
+ssh = ["paramiko>=2.11"]
 
 [project.scripts]
 f5audit = "f5audit.cli:main"

@@ -1,4 +1,4 @@
-"""Command line interface: collect / analyze / validate."""
+"""Command line interface: collect / analyze / validate / ping."""
 
 from __future__ import annotations
 
@@ -16,6 +16,17 @@ from .client import F5APIError, F5AuthError, F5ClientError, F5ReadOnlyClient
 from .collector import CollectionData, Collector, RawStore, load_from_raw
 from .correlator import correlate
 from .parsing import parse_collection
+from .pingcheck import (
+    STATUS_NO,
+    STATUS_NOT_TESTED,
+    STATUS_UNKNOWN,
+    STATUS_YES,
+    SSHCommandRunner,
+    collect_addresses,
+    enrich_workbook,
+    load_report,
+    run_ping_checks,
+)
 from .report import build_tables, default_report_name, write_csv, write_xlsx
 
 EXIT_OK = 0
@@ -105,6 +116,24 @@ def build_parser() -> argparse.ArgumentParser:
         "validate", help="Probe access: login plus key GET endpoints"
     )
     _add_connection_args(validate_parser)
+
+    # Deliberately NOT _add_connection_args: those flags are REST-only.
+    ping_parser = subparsers.add_parser(
+        "ping",
+        help="Post-process an existing report: ping its removal candidates from the F5 over SSH",
+    )
+    ping_parser.add_argument("--host", help="BIG-IP management address")
+    ping_parser.add_argument("--user", help="Username (or set the F5_USER environment variable)")
+    ping_parser.add_argument(
+        "--report",
+        required=True,
+        metavar="XLSX",
+        help="Existing .xlsx report to annotate in place",
+    )
+    ping_parser.add_argument("--ssh-port", type=int, default=22, help="SSH port (default: 22)")
+    ping_parser.add_argument(
+        "--count", type=int, default=2, help="Echo requests per IP (default: 2)"
+    )
 
     return parser
 
@@ -252,6 +281,75 @@ def cmd_analyze(args) -> int:
     return EXIT_WARNINGS if analysis.warnings else EXIT_OK
 
 
+def cmd_ping(args) -> int:
+    report_path = Path(args.report)
+    if report_path.suffix.lower() != ".xlsx":
+        print(
+            "Error: the ping post-process works on .xlsx reports only.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+    if not report_path.is_file():
+        print(f"Error: report not found: {args.report}", file=sys.stderr)
+        return EXIT_ERROR
+    workbook = load_report(str(report_path))
+    addresses, sheet_warnings = collect_addresses(workbook)
+    for warning in sheet_warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    if sheet_warnings:
+        print("Error: this does not look like an f5audit xlsx report.", file=sys.stderr)
+        return EXIT_ERROR
+    if not addresses:
+        print("No removal candidates to ping (the Orphan Nodes sheet has no IPs).")
+        return EXIT_OK
+
+    if not args.host:
+        print("Error: --host is required for this command.", file=sys.stderr)
+        return EXIT_ERROR
+    username, password = _resolve_credentials(args)
+
+    print(f"Pinging {len(addresses)} unique address(es) from {args.host} over SSH...")
+    runner = SSHCommandRunner(
+        args.host,
+        username,
+        password,
+        port=args.ssh_port,
+        command_timeout=max(10, args.count * 2 + 5),
+    )
+    with runner:
+        results, failure = run_ping_checks(addresses, runner.run, count=args.count, progress=print)
+
+    enrich_warnings = enrich_workbook(workbook, results)
+    for warning in enrich_warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+
+    out_path = report_path
+    try:
+        workbook.save(str(out_path))
+    except PermissionError:
+        # The common VDI case: the report is open in Excel. The SSH
+        # results took minutes to gather; never throw them away.
+        out_path = report_path.with_name(report_path.stem + "_ping.xlsx")
+        workbook.save(str(out_path))
+        print(
+            f"WARNING: could not overwrite {report_path} (open in Excel?); "
+            f"saved to {out_path} instead.",
+            file=sys.stderr,
+        )
+
+    counts = {status: 0 for status in (STATUS_YES, STATUS_NO, STATUS_NOT_TESTED, STATUS_UNKNOWN)}
+    for result in results.values():
+        counts[result.status] = counts.get(result.status, 0) + 1
+    print(
+        f"\nPing results: {counts[STATUS_YES]} reachable, {counts[STATUS_NO]} unreachable, "
+        f"{counts[STATUS_NOT_TESTED]} not tested, {counts[STATUS_UNKNOWN]} unknown"
+    )
+    print(f'Results written to: {out_path} (columns "Ping (from F5)", "Ping note")')
+    if failure:
+        print(f"WARNING: SSH failed mid-run: {failure}", file=sys.stderr)
+    return EXIT_WARNINGS if failure or enrich_warnings else EXIT_OK
+
+
 VALIDATE_PROBES = [
     ("sys/version", "/mgmt/tm/sys/version", None),
     ("auth/partition", "/mgmt/tm/auth/partition", {"$top": 1}),
@@ -335,6 +433,7 @@ def main(argv: list | None = None) -> int:
         "collect": cmd_collect,
         "analyze": cmd_analyze,
         "validate": cmd_validate,
+        "ping": cmd_ping,
     }
     try:
         return handlers[args.command](args)

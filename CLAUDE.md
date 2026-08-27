@@ -36,6 +36,32 @@ These invariants are enforced by structural tests in `tests/test_client.py`
 strings anywhere in the package). Those tests are not optional and must not be relaxed
 to accommodate a new feature.
 
+## The one SSH exception: the `ping` post-process
+
+`f5audit ping` is an **opt-in post-processing** subcommand that annotates an existing
+xlsx report with ping results gathered over SSH. It exists because some read-only
+accounts can SSH to the BIG-IP but are denied iControl REST. Its boundaries are as
+strict as the REST invariants above:
+
+1. **It is never part of collection or analysis.** No collection/analysis code imports
+   `f5audit/pingcheck.py`; the command only reads and annotates an already generated
+   report. The REST client and every invariant above are untouched, and the structural
+   tests still grep every package file, including the SSH module.
+2. **It is structurally ping-only.** The two fixed command templates in `pingcheck.py`
+   are the only command-building sites, the single interpolated value is an
+   `ipaddress`-validated IPv4 literal, and a runtime guard refuses any command that is
+   not a ping. Nothing user-controllable is ever executed and nothing on the device is
+   created, modified, or deleted — ping is read-only ICMP.
+3. **Only removal candidates are pinged.** IPs are sourced exclusively from the
+   Orphan Nodes sheet — by construction the nodes whose verdict is not `IN USE` — so
+   in-use nodes are never touched.
+4. **paramiko is optional and lazy.** It is the `ssh` extra (`pip install
+   'f5audit[ssh]'`), imported only inside `SSHCommandRunner.connect`. The test suite
+   must keep passing without paramiko installed, and no test opens a socket (the ping
+   engine takes an injectable command runner).
+5. **Credentials follow invariant 4 unchanged**: `F5_PASS` or `getpass`, never a CLI
+   argument.
+
 ## Correctness invariants for verdicts
 
 The report drives a human deletion decision on a production device. A false `ORPHAN`
