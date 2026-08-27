@@ -39,7 +39,7 @@ class ReportTable:
     title: str
     headers: list[str]
     rows: list[list[object]] = field(default_factory=list)
-    verdict_column: int | None = None  # 0-based index into headers
+    verdict_columns: tuple[int, ...] = ()  # 0-based indexes into headers
 
 
 def default_report_name(hostname: str, fmt: str = "xlsx") -> str:
@@ -185,9 +185,9 @@ def _build_inventory(
         "ARP MAC",
         "Network note",
     ]
-    # One row per pool member: the colored verdict is the pool's, the node's
-    # own verdict has its own column so the two are never confused.
-    table = ReportTable("Inventory", headers, verdict_column=17)
+    # Both verdict columns are colored independently: node verdict at 4,
+    # pool verdict at 17.
+    table = ReportTable("Inventory", headers, verdict_columns=(4, 17))
 
     nodes_in_pools = set()
     for pool_path, pool in sorted(parsed.pools.items()):
@@ -252,7 +252,8 @@ def _build_inventory(
                 "",
                 "",
                 "",
-                # No pool: the node verdict is the only one, keep it colored.
+                # No pool: mirror the node verdict into the pool columns so a
+                # standalone node still shows a verdict here too.
                 verdict.verdict if verdict else "",
                 verdict.notes if verdict else "",
             ]
@@ -273,7 +274,7 @@ def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportT
         "ARP MAC",
         "Network note",
     ]
-    table = ReportTable("Orphan Nodes", headers, verdict_column=4)
+    table = ReportTable("Orphan Nodes", headers, verdict_columns=(4,))
     for path, verdict in sorted(analysis.node_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -309,7 +310,7 @@ def _build_pools(
         "Notes",
         "Suggested command (informational)",
     ]
-    table = ReportTable("Orphan-Inactive Pools", headers, verdict_column=8)
+    table = ReportTable("Orphan-Inactive Pools", headers, verdict_columns=(8,))
     for path, verdict in sorted(analysis.pool_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -346,7 +347,7 @@ def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> Re
         "Verdict",
         "Notes",
     ]
-    table = ReportTable("Inactive Virtual Servers", headers, verdict_column=9)
+    table = ReportTable("Inactive Virtual Servers", headers, verdict_columns=(9,))
     for path, verdict in sorted(analysis.virtual_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -391,7 +392,7 @@ def _build_dead_chains(
         "Notes",
         "Suggested commands (informational)",
     ]
-    table = ReportTable("Dead Chains", headers, verdict_column=9)
+    table = ReportTable("Dead Chains", headers, verdict_columns=(9,))
     for path in sorted(analysis.offline_pools):
         verdict = analysis.pool_verdicts[path]
         pool = parsed.pools[path]
@@ -446,7 +447,7 @@ def _build_orphan_monitors(parsed: ParsedData, analysis: AnalysisResult) -> Repo
         "Notes",
         "Suggested command (informational)",
     ]
-    table = ReportTable("Orphan Monitors", headers, verdict_column=3)
+    table = ReportTable("Orphan Monitors", headers, verdict_columns=(3,))
     for path, verdict in sorted(analysis.monitor_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -494,11 +495,11 @@ def write_xlsx(tables: dict[str, ReportTable], out_path: str) -> None:
             cell.alignment = Alignment(vertical="center")
         for row in table.rows:
             sheet.append(row)
-            if table.verdict_column is not None:
-                verdict = row[table.verdict_column]
+            for column in table.verdict_columns:
+                verdict = row[column]
                 color = VERDICT_FILLS.get(str(verdict))
                 if color:
-                    cell = sheet.cell(row=sheet.max_row, column=table.verdict_column + 1)
+                    cell = sheet.cell(row=sheet.max_row, column=column + 1)
                     cell.fill = PatternFill("solid", fgColor=color)
         sheet.freeze_panes = "A2"
         last_column = get_column_letter(len(table.headers))
