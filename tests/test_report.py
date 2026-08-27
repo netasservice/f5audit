@@ -168,7 +168,7 @@ def test_network_columns_are_appended_to_inventory_and_orphan_nodes():
     _, tables = make_tables()
     inventory = tables["inventory"]
     assert inventory.headers[-2:] == ["ARP MAC", "Network note"]
-    assert inventory.verdict_column == 17  # unchanged by the appended columns
+    assert inventory.verdict_columns == (4, 17)  # unchanged by the appended columns
 
     member_row = next(
         r for r in inventory.rows if r[0] == "/Common/node-web-1" and r[5] == "/Common/pool-web"
@@ -178,7 +178,7 @@ def test_network_columns_are_appended_to_inventory_and_orphan_nodes():
 
     orphan_nodes = tables["orphan_nodes"]
     assert orphan_nodes.headers[-2:] == ["ARP MAC", "Network note"]
-    assert orphan_nodes.verdict_column == 4
+    assert orphan_nodes.verdict_columns == (4,)
     rows = {row[0]: row for row in orphan_nodes.rows}
     # /26 self-IP: node-dead (10.0.0.50) is local, node-orphan (10.0.0.99) routed.
     assert rows["/Common/node-dead"][-1] == "on local subnet, no ARP entry (idle or down)"
@@ -239,17 +239,23 @@ def test_write_xlsx(tmp_path):
     assert inventory.cell(row=1, column=1).value == "Node"
     assert inventory.max_row > 1
 
-    # Verdict cells carry the conditional fill colors.
+    # Verdict cells carry the conditional fill colors, in both the node
+    # verdict and the pool verdict columns.
+    node_verdict_column, pool_verdict_column = (c + 1 for c in tables["inventory"].verdict_columns)
     fills = set()
-    verdict_column = tables["inventory"].verdict_column + 1
+    node_fills = set()
     for row_index in range(2, inventory.max_row + 1):
-        cell = inventory.cell(row=row_index, column=verdict_column)
+        cell = inventory.cell(row=row_index, column=pool_verdict_column)
         if cell.fill and cell.fill.fgColor and cell.fill.fgColor.rgb:
             fills.add(cell.fill.fgColor.rgb)
+        node_cell = inventory.cell(row=row_index, column=node_verdict_column)
+        if node_cell.fill and node_cell.fill.fgColor and node_cell.fill.fgColor.rgb:
+            node_fills.add(node_cell.fill.fgColor.rgb)
     assert "00C6EFCE" in fills or "FFC6EFCE" in fills  # green for IN USE
+    assert "00FFC7CE" in node_fills or "FFFFC7CE" in node_fills  # red for ORPHAN node
 
     dead_chains = workbook["Dead Chains"]
-    verdict_column = tables["dead_chains"].verdict_column + 1
+    (verdict_column,) = (c + 1 for c in tables["dead_chains"].verdict_columns)
     cell = dead_chains.cell(row=2, column=verdict_column)
     assert cell.fill.fgColor.rgb in ("00CCC0DA", "FFCCC0DA")  # purple for OFFLINE
 
