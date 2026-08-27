@@ -172,17 +172,18 @@ def _split_route_domain(address: str) -> tuple[str, str]:
 def _parse_arp_map(data: CollectionData) -> dict[str, str]:
     """Map address -> MAC from the dynamic ARP stats plus static entries.
 
-    Dynamic ARP stats use tmctl-style field names (addr, hwaddr,
-    expire-in-sec); entries without an address are skipped rather than
+    Dynamic ARP stats entries use the same field names as the static
+    net/arp collection (ipAddress, macAddress, status, vlan, tmName,
+    expireInSec); entries without an address are skipped rather than
     trusted.
     """
     arp_map: dict[str, str] = {}
     for entries in iter_stats_entries(data.get("net_arp_stats")):
-        address = stat_value(entries, "addr")
+        address = stat_value(entries, "ipAddress")
         status = str(stat_value(entries, "status", "") or "").lower()
         if not address or status in _ARP_ABSENT_STATUSES:
             continue
-        arp_map[str(address)] = str(stat_value(entries, "hwaddr", "") or "")
+        arp_map[str(address)] = str(stat_value(entries, "macAddress", "") or "")
     for item in data.get("net_arp") or []:
         address = item.get("ipAddress")
         if address and address not in arp_map:

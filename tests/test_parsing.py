@@ -268,7 +268,7 @@ def test_parse_arp_map_skips_entries_without_address():
     raw = {
         "entries": {
             "https://localhost/mgmt/tm/net/arp/x/stats": {
-                "nestedStats": {"entries": {"hwaddr": {"description": "00:00:5e:00:53:99"}}}
+                "nestedStats": {"entries": {"macAddress": {"description": "00:00:5e:00:53:99"}}}
             }
         }
     }
