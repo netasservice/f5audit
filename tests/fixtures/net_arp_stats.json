@@ -5,22 +5,24 @@
     "https://localhost/mgmt/tm/net/arp/10.0.0.1/stats": {
       "nestedStats": {
         "entries": {
-          "addr": {"description": "10.0.0.1"},
-          "hwaddr": {"description": "00:00:5e:00:53:01"},
-          "vlan": {"description": "/Common/internal"},
-          "expire-in-sec": {"value": 240},
-          "status": {"description": "resolved"}
+          "expireInSec": {"description": "240"},
+          "ipAddress": {"description": "10.0.0.1"},
+          "macAddress": {"description": "00:00:5e:00:53:01"},
+          "tmName": {"description": "10.0.0.1"},
+          "status": {"description": "resolved"},
+          "vlan": {"description": "/Common/internal"}
         }
       }
     },
     "https://localhost/mgmt/tm/net/arp/10.0.0.33/stats": {
       "nestedStats": {
         "entries": {
-          "addr": {"description": "10.0.0.33"},
-          "hwaddr": {"description": "00:00:5e:00:53:21"},
-          "vlan": {"description": "/Common/internal"},
-          "expire-in-sec": {"value": 12},
-          "status": {"description": "incomplete"}
+          "expireInSec": {"description": "12"},
+          "ipAddress": {"description": "10.0.0.33"},
+          "macAddress": {"description": "00:00:5e:00:53:21"},
+          "tmName": {"description": "10.0.0.33"},
+          "status": {"description": "incomplete"},
+          "vlan": {"description": "/Common/internal"}
         }
       }
     }
