@@ -1,6 +1,6 @@
 # f5audit
 
-[![CI](https://github.com/netcraftworks/f5audit/actions/workflows/ci.yml/badge.svg)](https://github.com/netcraftworks/f5audit/actions/workflows/ci.yml)
+[![CI](https://github.com/netasservice/f5audit/actions/workflows/ci.yml/badge.svg)](https://github.com/netasservice/f5audit/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/f5audit?label=pypi)](https://pypi.org/project/f5audit/)
 [![Python](https://img.shields.io/pypi/pyversions/f5audit?label=python)](https://pypi.org/project/f5audit/)
 
