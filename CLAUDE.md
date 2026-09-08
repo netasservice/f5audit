@@ -94,7 +94,7 @@ document that will drift.
 
 ## Git workflow
 
-The repository lives at `netcraftworks/f5audit` on GitHub.
+The repository lives at `netasservice/f5audit` on GitHub.
 
 - One branch per change, named `feat/<short-description>` or `fix/<short-description>`.
 - Every change lands via a pull request into `main`. Never commit directly to `main`.
