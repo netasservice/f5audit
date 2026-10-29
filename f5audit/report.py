@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 from . import commands
 from .analyzer import AnalysisResult, ObjectVerdict, Verdict
 from .correlator import Correlation, describe_monitor_users
-from .models import Node, Pool, PoolMember
+from .models import Monitor, Node, Pool, PoolMember
 from .parsing import ParsedData
 
 VERDICT_FILLS = {
@@ -88,6 +88,17 @@ PROFILES_MISSING_NOTE = (
     "No rollback: the virtual server's profiles were not collected; re-run "
     "'f5audit collect --save-raw' on this raw directory to backfill them."
 )
+MONITOR_COMMAND_HEADERS = [
+    "Delete monitor",
+    "Create monitor (rollback)",
+]
+PARENT_MISSING_NOTE = (
+    "Rollback lists every property: the defaults-from parent is not in the "
+    "collection (its partition was not readable), so inherited values could "
+    "not be told from local ones."
+)
+SECRETS_OMITTED_NOTE = "Rollback omits {keys} (masked by REST); re-enter by hand."
+RAW_VALUES_NOTE = "Rollback omits the user-defined variables (apiRawValues); add them by hand."
 
 
 @dataclass
@@ -638,13 +649,14 @@ def _build_monitor_findings(
         "Used by",
         "Verdict",
         "Notes",
-        "Suggested command (informational)",
+        *MONITOR_COMMAND_HEADERS,
     ]
     table = ReportTable("Monitor Findings", headers, verdict_columns=(5,))
     for path, verdict in sorted(analysis.monitor_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
         monitor = parsed.monitors[path]
+        cells, note = _monitor_command_cells(parsed, monitor, verdict)
         table.rows.append(
             [
                 path,
@@ -653,13 +665,32 @@ def _build_monitor_findings(
                 monitor.defaults_from,
                 describe_monitor_users(correlation.monitor_users.get(path, set())),
                 verdict.verdict,
-                verdict.notes,
-                f"delete ltm monitor {monitor.type} {path}"
-                if verdict.verdict == Verdict.ORPHAN
-                else "",
+                _with_note(verdict.notes, note),
+                *cells,
             ]
         )
     return table
+
+
+def _monitor_command_cells(
+    parsed: ParsedData, monitor: Monitor, verdict: ObjectVerdict
+) -> tuple[list[str], str]:
+    """(MONITOR_COMMAND_HEADERS cells, extra note)."""
+    if not _has_commands(verdict):
+        return ["", ""], ""
+    parent = parsed.monitors.get(monitor.defaults_from)
+    notes = []
+    if monitor.defaults_from and parent is None:
+        notes.append(PARENT_MISSING_NOTE)
+    secrets = commands.masked_secret_keys(monitor.attributes)
+    if secrets:
+        notes.append(SECRETS_OMITTED_NOTE.format(keys=", ".join(secrets)))
+    if monitor.raw_values:
+        notes.append(RAW_VALUES_NOTE)
+    return [
+        commands.delete_monitor_command(monitor.type, monitor.full_path),
+        commands.monitor_create_command(monitor, parent),
+    ], " ".join(notes)
 
 
 def _build_manual_review(analysis: AnalysisResult) -> ReportTable:

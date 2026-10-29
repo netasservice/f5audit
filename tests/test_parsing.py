@@ -231,6 +231,17 @@ def test_parse_collection_builds_models():
     assert parsed.monitors["/Common/mon-orphan"].type == "http"
     assert parsed.monitors["/Common/mon-orphan"].defaults_from == "/Common/http"
     assert parsed.monitors["/Common/http"].defaults_from == ""
+    attributes = parsed.monitors["/Common/mon-child"].attributes
+    assert attributes["interval"] == 10 and attributes["recv"] == "200 OK"
+    assert not {
+        "kind",
+        "name",
+        "partition",
+        "fullPath",
+        "selfLink",
+        "generation",
+        "defaultsFrom",
+    } & set(attributes)
     assert parsed.pools["/Common/pool-web"].members[0].monitor == "/Common/mon-member-only"
     assert parsed.default_node_monitor_collected is True
     assert parsed.default_node_monitors == ["/Common/icmp"]

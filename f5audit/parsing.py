@@ -557,6 +557,41 @@ def _parse_policies(data: CollectionData, parsed: ParsedData) -> None:
                 policy.attached_virtuals.append(virtual.full_path)
 
 
+# REST keys that describe the object rather than configure it.
+OBJECT_METADATA_KEYS = {
+    "kind",
+    "selfLink",
+    "fullPath",
+    "generation",
+    "name",
+    "partition",
+    "subPath",
+    "appService",
+    "defaultsFrom",
+    "apiRawValues",
+}
+
+
+def configurable_attributes(item: dict[str, Any]) -> dict[str, Any]:
+    """The properties a tmsh `create` would take: metadata and the
+    `*Reference` link objects dropped, at every nesting level."""
+
+    def strip(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: strip(nested) for key, nested in value.items() if not key.endswith("Reference")
+            }
+        if isinstance(value, list):
+            return [strip(nested) for nested in value]
+        return value
+
+    return {
+        key: strip(value)
+        for key, value in item.items()
+        if key not in OBJECT_METADATA_KEYS and not key.endswith("Reference")
+    }
+
+
 def _parse_monitors(data: CollectionData, parsed: ParsedData) -> None:
     for key in data.keys_with_prefix("ltm_monitor_"):
         type_and_partition = key[len("ltm_monitor_") :]
@@ -570,6 +605,8 @@ def _parse_monitors(data: CollectionData, parsed: ParsedData) -> None:
                 type=monitor_type,
                 defaults_from=normalize_ref(item.get("defaultsFrom"), partition),
                 app_service=iapp_owner(item, full_path),
+                attributes=configurable_attributes(item),
+                raw_values=dict(item.get("apiRawValues") or {}),
             )
 
 

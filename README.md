@@ -234,8 +234,8 @@ with warnings (standby device, denied partitions, missing endpoints).
    rollback commands described below.
 7. **Monitor Findings** — every monitor whose verdict is not `IN USE`, with
    its `defaults-from` parent, who uses it (nodes, pools, pool members,
-   inheriting monitors, the default node monitor) and informational `tmsh`
-   commands.
+   inheriting monitors, the default node monitor) and the change and
+   rollback commands described below.
 8. **Manual Review** — objects held back from a removal verdict, with
    what causes the doubt: the dynamic iRule/policy, the owning iApp, the
    `IN USE` member node(s) of a dead pool, the iRules/policies attached
@@ -287,6 +287,7 @@ the reverse.
 | Node Findings | `Remove node from pool(s)` (one `modify ltm pool ... members delete` per pool, `OFFLINE` only) · `Delete node` · `Create node (rollback)` · `Add node back to pool(s) (rollback)` |
 | Pool Findings | `Detach pool from virtual servers` (`modify ltm virtual <vs> pool none`, for each VS using it as default pool) · `Delete pool` · `Recreate pool (rollback)` · `Reattach pool to virtual servers (rollback)` |
 | Virtual Server Findings | `Delete virtual server` · `Recreate virtual server (rollback)` |
+| Monitor Findings | `Delete monitor` · `Create monitor (rollback)` |
 | Dead Chains | `Delete virtual servers` · `Delete pool` · `Delete nodes` · `Recreate nodes (rollback)` · `Recreate pool (rollback)` · `Recreate virtual servers (rollback)` |
 
 - **Pools referenced by an iRule or an LTM policy** never get commands,
@@ -314,6 +315,16 @@ the reverse.
   address also deletes its virtual-address (auto-delete); it comes back
   with default settings, so the notes ask to record any non-default
   virtual-address setting first.
+
+The monitor rollback is `create ltm monitor <type> <name> defaults-from
+<parent> ...` followed by only the properties whose value differs from the
+parent's (REST reports every property with its effective, inherited value,
+so this reproduces the effective configuration rather than the exact set
+of local overrides). `send`/`recv` strings are quoted as REST reports
+them. Passwords are masked by REST and left out, and the notes say so; the
+same goes for an `external` monitor's user-defined variables. When the
+parent lives in a partition that was not readable, the rollback lists
+every property and the notes say so.
 
 ### Network context columns (Inventory, Node Findings)
 
