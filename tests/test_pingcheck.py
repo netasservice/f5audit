@@ -193,7 +193,7 @@ def test_collect_addresses_excludes_in_use_nodes(tmp_path):
     workbook = load_report(str(make_report(tmp_path)))
     addresses, warnings = collect_addresses(workbook)
     assert warnings == []
-    # Orphan Nodes only: node-dead + node-orphan. The IN USE node-web-1
+    # Node Findings only: node-dead + node-orphan. The IN USE node-web-1
     # (10.0.0.1) must never be pinged.
     assert addresses == ["10.0.0.50", "10.0.0.99"]
 
@@ -209,7 +209,7 @@ def test_enrich_workbook_replicates_results_across_sheets(tmp_path):
     workbook.save(str(path))
 
     reloaded = load_workbook(str(path))
-    for title in ("Inventory", "Orphan Nodes"):
+    for title in ("Inventory", "Node Findings"):
         sheet = reloaded[title]
         headers = [cell.value for cell in sheet[1]]
         status_column = headers.index("Ping (from F5)") + 1
@@ -227,8 +227,8 @@ def test_enrich_workbook_replicates_results_across_sheets(tmp_path):
         # Replicated on every row sharing the IP, on both sheets.
         assert by_ip.get("10.0.0.50") == {STATUS_NO}
         assert by_ip.get("10.0.0.99") == {STATUS_YES}
-    assert reloaded["Orphan Nodes"].cell(
-        row=1, column=reloaded["Orphan Nodes"].max_column - 1
+    assert reloaded["Node Findings"].cell(
+        row=1, column=reloaded["Node Findings"].max_column - 1
     ).value == ("Ping (from F5)")
     inventory = reloaded["Inventory"]
     for row in range(2, inventory.max_row + 1):
@@ -277,7 +277,7 @@ def test_enrich_workbook_is_idempotent(tmp_path):
     workbook.save(str(path))
 
     reloaded = load_workbook(str(path))
-    sheet = reloaded["Orphan Nodes"]
+    sheet = reloaded["Node Findings"]
     headers = [cell.value for cell in sheet[1]]
     assert headers.count("Ping (from F5)") == 1
     assert reloaded["Inventory"].max_column == before_columns
@@ -295,16 +295,16 @@ def test_enrich_workbook_degrades_when_a_sheet_is_missing(tmp_path):
     del workbook["Inventory"]
     warnings = enrich_workbook(workbook, results)
     assert any("Inventory" in warning for warning in warnings)
-    headers = [cell.value for cell in workbook["Orphan Nodes"][1]]
+    headers = [cell.value for cell in workbook["Node Findings"][1]]
     assert headers[-2:] == ["Ping (from F5)", "Ping note"]
 
 
 def test_collect_addresses_warns_without_orphan_nodes_sheet(tmp_path):
     workbook = load_report(str(make_report(tmp_path)))
-    del workbook["Orphan Nodes"]
+    del workbook["Node Findings"]
     addresses, warnings = collect_addresses(workbook)
     assert addresses == []
-    assert any("Orphan Nodes" in warning for warning in warnings)
+    assert any("Node Findings" in warning for warning in warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +347,17 @@ def test_cmd_ping_requires_host_after_validating_report(tmp_path, capsys):
     path = make_report(tmp_path)
     assert main(["ping", "--report", str(path)]) == EXIT_ERROR
     assert "--host is required" in capsys.readouterr().err
+
+
+def test_legacy_orphan_nodes_sheet_title_is_still_accepted(tmp_path):
+    # Reports written by earlier releases call the sheet "Orphan Nodes".
+    path = make_report(tmp_path)
+    workbook = load_report(str(path))
+    workbook["Node Findings"].title = "Orphan Nodes"
+    addresses, warnings = collect_addresses(workbook)
+    assert warnings == []
+    assert addresses == ["10.0.0.50", "10.0.0.99"]
+    results, _ = run_ping_checks(addresses, FakeRunner(reachable={"10.0.0.99"}))
+    assert enrich_workbook(workbook, results) == []
+    headers = [cell.value for cell in workbook["Orphan Nodes"][1]]
+    assert headers[-2:] == ["Ping (from F5)", "Ping note"]

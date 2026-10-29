@@ -36,11 +36,11 @@ def test_expected_sheets_exist():
     assert list(tables) == [
         "summary",
         "inventory",
-        "orphan_nodes",
-        "pools",
-        "inactive_virtuals",
+        "node_findings",
+        "pool_findings",
+        "virtual_server_findings",
         "dead_chains",
-        "orphan_monitors",
+        "monitor_findings",
         "manual_review",
     ]
 
@@ -69,16 +69,16 @@ def test_inventory_has_member_rows_and_orphan_node_rows():
 
 def test_orphan_sheets_only_contain_non_in_use_objects():
     _, tables = make_tables()
-    assert [row[0] for row in tables["orphan_nodes"].rows] == [
+    assert [row[0] for row in tables["node_findings"].rows] == [
         "/Common/node-dead",
         "/Common/node-orphan",
     ]
-    pool_names = [row[0] for row in tables["pools"].rows]
+    pool_names = [row[0] for row in tables["pool_findings"].rows]
     assert "/Common/pool-orphan" in pool_names
     assert "/Common/pool-idle" in pool_names
     assert "/Common/pool-dead" in pool_names
     assert "/Common/pool-web" not in pool_names
-    monitor_names = [row[0] for row in tables["orphan_monitors"].rows]
+    monitor_names = [row[0] for row in tables["monitor_findings"].rows]
     assert monitor_names == ["/Common/mon-orphan"]
 
 
@@ -93,7 +93,7 @@ def table_row(tables, key, first_cell):
 
 def test_orphan_nodes_commands_for_offline_and_orphan():
     _, tables = make_tables()
-    dead = table_row(tables, "orphan_nodes", "/Common/node-dead")
+    dead = table_row(tables, "node_findings", "/Common/node-dead")
     assert dead["Remove node from pool(s)"] == (
         "modify ltm pool /Common/pool-dead members delete { /Common/node-dead:443 }"
     )
@@ -104,7 +104,7 @@ def test_orphan_nodes_commands_for_offline_and_orphan():
     assert dead["Add node back to pool(s) (rollback)"] == (
         "modify ltm pool /Common/pool-dead members add { /Common/node-dead:443 }"
     )
-    orphan = table_row(tables, "orphan_nodes", "/Common/node-orphan")
+    orphan = table_row(tables, "node_findings", "/Common/node-orphan")
     assert orphan["Remove node from pool(s)"] == ""
     assert orphan["Delete node"] == "delete ltm node /Common/node-orphan"
     assert orphan["Add node back to pool(s) (rollback)"] == ""
@@ -112,7 +112,7 @@ def test_orphan_nodes_commands_for_offline_and_orphan():
 
 def test_pool_commands_only_for_orphan_and_offline():
     _, tables = make_tables()
-    offline = table_row(tables, "pools", "/Common/pool-dead")
+    offline = table_row(tables, "pool_findings", "/Common/pool-dead")
     assert offline["Detach pool from virtual servers"] == (
         "modify ltm virtual /Common/vs-dead pool none"
     )
@@ -124,14 +124,14 @@ def test_pool_commands_only_for_orphan_and_offline():
     assert offline["Reattach pool to virtual servers (rollback)"] == (
         "modify ltm virtual /Common/vs-dead pool /Common/pool-dead"
     )
-    orphan = table_row(tables, "pools", "/Common/pool-orphan")
+    orphan = table_row(tables, "pool_findings", "/Common/pool-orphan")
     assert orphan["Detach pool from virtual servers"] == ""
     assert orphan["Delete pool"] == "delete ltm pool /Common/pool-orphan"
     assert (
         orphan["Recreate pool (rollback)"]
         == "create ltm pool /Common/pool-orphan monitor /Common/tcp"
     )
-    inactive = table_row(tables, "pools", "/Common/pool-idle")
+    inactive = table_row(tables, "pool_findings", "/Common/pool-idle")
     assert inactive["Delete pool"] == ""
     assert inactive["Recreate pool (rollback)"] == ""
 
@@ -140,7 +140,7 @@ def test_dead_pool_named_by_an_irule_is_manual_review_without_commands():
     parsed = parse_collection(build_collection())
     parsed.pools["/Common/pool-irule"].members = []  # empty, named by vs-web's iRule
     tables = analyze(parsed)
-    row = table_row(tables, "pools", "/Common/pool-irule")
+    row = table_row(tables, "pool_findings", "/Common/pool-irule")
     assert row["Verdict"] == Verdict.MANUAL_REVIEW
     assert [row[h] for h in POOL_COMMAND_HEADERS] == ["", "", "", ""]
     assert "referenced by iRule(s) /Common/irule-static" in row["Notes"]
@@ -151,7 +151,7 @@ def test_dead_pool_named_by_an_irule_is_manual_review_without_commands():
 
 def test_virtual_commands_for_offline_virtual():
     _, tables = make_tables()
-    row = table_row(tables, "inactive_virtuals", "/Common/vs-dead")
+    row = table_row(tables, "virtual_server_findings", "/Common/vs-dead")
     assert row["Delete virtual server"] == "delete ltm virtual /Common/vs-dead"
     assert row["Recreate virtual server (rollback)"] == (
         "create ltm virtual /Common/vs-dead destination /Common/192.0.2.13:443 "
@@ -165,7 +165,7 @@ def test_virtual_commands_for_offline_virtual():
         'description "Decommissioned app example.net"'
     )
     assert "virtual-address" in row["Notes"]
-    idle = table_row(tables, "inactive_virtuals", "/Common/vs-idle")
+    idle = table_row(tables, "virtual_server_findings", "/Common/vs-idle")
     assert idle["Verdict"] == Verdict.INACTIVE
     assert idle["Delete virtual server"] == ""
 
@@ -174,7 +174,7 @@ def test_virtual_rollback_withheld_without_collected_profiles():
     collection = build_collection()
     del collection.datasets["ltm_virtual_profiles@/Common/vs-dead"]
     tables = analyze(parse_collection(collection))
-    row = table_row(tables, "inactive_virtuals", "/Common/vs-dead")
+    row = table_row(tables, "virtual_server_findings", "/Common/vs-dead")
     assert row["Delete virtual server"] == "delete ltm virtual /Common/vs-dead"
     assert row["Recreate virtual server (rollback)"] == ""
     assert "profiles were not collected" in row["Notes"]
@@ -242,7 +242,7 @@ def test_dead_chains_sheet_keeps_capped_pool_without_pool_or_node_command():
     assert row["Delete virtual servers"] == "delete ltm virtual /Common/vs-dead"
     assert row["Delete pool"] == ""
     # The node is still a member of the pool that stays: tmsh would refuse
-    # the delete, so the Orphan Nodes sheet carries its commands instead.
+    # the delete, so the Node Findings sheet carries its commands instead.
     assert row["Delete nodes"] == ""
     assert "remove it from its pools first" in row["Notes"]
 
@@ -258,7 +258,7 @@ def test_virtual_with_irule_gets_no_commands_on_any_sheet():
     parsed.virtuals["/Common/vs-dead"].irules.append("/Common/irule-redirect")
     tables = analyze(parsed)
     # The detach command would modify the held virtual server: all blank.
-    pool_row = table_row(tables, "pools", "/Common/pool-dead")
+    pool_row = table_row(tables, "pool_findings", "/Common/pool-dead")
     assert pool_row["Verdict"] == Verdict.MANUAL_REVIEW
     assert [pool_row[h] for h in POOL_COMMAND_HEADERS] == ["", "", "", ""]
     chain = table_row(tables, "dead_chains", "/Common/pool-dead")
@@ -324,7 +324,7 @@ def test_network_columns_are_appended_to_inventory_and_orphan_nodes():
         "in ARP table (MAC 00:00:5e:00:53:01)",
     ]
 
-    orphan_nodes = tables["orphan_nodes"]
+    orphan_nodes = tables["node_findings"]
     assert orphan_nodes.headers[-2:] == ["ARP MAC", "Network note"]
     assert orphan_nodes.verdict_columns == (4,)
     rows = {row[0]: row for row in orphan_nodes.rows}
@@ -554,7 +554,7 @@ def test_iapp_owned_objects_get_no_delete_commands():
     correlation = correlate(parsed)
     analysis = Analyzer(parsed, correlation).run()
     tables = build_tables(parsed, correlation, analysis)
-    node_row = next(r for r in tables["orphan_nodes"].rows if r[0] == "/Common/node-dead")
+    node_row = next(r for r in tables["node_findings"].rows if r[0] == "/Common/node-dead")
     assert node_row[4] == Verdict.MANUAL_REVIEW
     assert node_row[6] == ""
     chain = next(r for r in tables["dead_chains"].rows if r[0] == "/Common/pool-dead")

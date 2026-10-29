@@ -111,11 +111,11 @@ f5audit ping --report report.xlsx --host 192.0.2.1 --user auditor
 Double-checks the removal candidates in an **already generated** report:
 a node with no ARP entry that also does not answer ping is a much safer
 deletion conversation. The command reads the `IP` column of the
-**Orphan Nodes** sheet — by construction the nodes that are *not*
+**Node Findings** sheet — by construction the nodes that are *not*
 `IN USE`, so in-use nodes are never pinged — deduplicates the IPs (a
 node in several pools is pinged once), runs `ping` on the BIG-IP over
 SSH for each unique IPv4, and writes two columns into both the
-Inventory and Orphan Nodes sheets **in place**, replicating each IP's
+Inventory and Node Findings sheets **in place** (reports written by earlier releases, where the sheet is called `Orphan Nodes`, are still accepted), replicating each IP's
 result across every row where it appears (on Inventory it fills the
 `Ping (from F5)` / `Ping note` columns the report already reserves, so
 the other columns never move):
@@ -211,10 +211,10 @@ with warnings (standby device, denied partitions, missing endpoints).
    default-pool reference from being `ORPHAN`. Columns `V:W` are reserved
    for `f5audit ping`, and `X:AA` hold the change-request commands
    described below.
-3. **Orphan Nodes** · 4. **Orphan-Inactive Pools** (with the same
+3. **Node Findings** · 4. **Pool Findings** (with the same
    `iRules selecting pool` / `Policies forwarding to pool` evidence
-   columns) · 5. **Inactive Virtual Servers** (with the attached
-   `iRules`) — filtered views with the change and rollback commands
+   columns) · 5. **Virtual Server Findings** (with the attached
+   `iRules`) — every object whose verdict is not `IN USE`, with the change and rollback commands
    described below.
 6. **Dead Chains** — one row per dead pool (empty or monitor-offline;
    verdict `OFFLINE (decommission candidate)`, or `MANUAL REVIEW` when
@@ -223,7 +223,7 @@ with warnings (standby device, denied partitions, missing endpoints).
    pool), grouping the whole chain (virtual servers →
    pool → member nodes) with per-object verdicts and the change and
    rollback commands described below.
-7. **Orphan Monitors** — filtered view with informational `tmsh`
+7. **Monitor Findings** — every monitor whose verdict is not `IN USE`, with informational `tmsh`
    commands.
 8. **Manual Review** — objects held back from a removal verdict, with
    what causes the doubt: the dynamic iRule/policy, the owning iApp, the
@@ -273,9 +273,9 @@ the reverse.
 
 | Sheet | Columns |
 |---|---|
-| Orphan Nodes | `Remove node from pool(s)` (one `modify ltm pool ... members delete` per pool, `OFFLINE` only) · `Delete node` · `Create node (rollback)` · `Add node back to pool(s) (rollback)` |
-| Orphan-Inactive Pools | `Detach pool from virtual servers` (`modify ltm virtual <vs> pool none`, for each VS using it as default pool) · `Delete pool` · `Recreate pool (rollback)` · `Reattach pool to virtual servers (rollback)` |
-| Inactive Virtual Servers | `Delete virtual server` · `Recreate virtual server (rollback)` |
+| Node Findings | `Remove node from pool(s)` (one `modify ltm pool ... members delete` per pool, `OFFLINE` only) · `Delete node` · `Create node (rollback)` · `Add node back to pool(s) (rollback)` |
+| Pool Findings | `Detach pool from virtual servers` (`modify ltm virtual <vs> pool none`, for each VS using it as default pool) · `Delete pool` · `Recreate pool (rollback)` · `Reattach pool to virtual servers (rollback)` |
+| Virtual Server Findings | `Delete virtual server` · `Recreate virtual server (rollback)` |
 | Dead Chains | `Delete virtual servers` · `Delete pool` · `Delete nodes` · `Recreate nodes (rollback)` · `Recreate pool (rollback)` · `Recreate virtual servers (rollback)` |
 
 - **Pools referenced by an iRule or an LTM policy** never get commands,
@@ -304,7 +304,7 @@ the reverse.
   with default settings, so the notes ask to record any non-default
   virtual-address setting first.
 
-### Network context columns (Inventory, Orphan Nodes)
+### Network context columns (Inventory, Node Findings)
 
 Every collection also reads the F5's own network tables — self-IPs
 (`net/self`), the static ARP entries (`net/arp`) and the dynamic ARP
