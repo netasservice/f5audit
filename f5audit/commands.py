@@ -18,22 +18,169 @@ tmsh-reference: ltm node, ltm pool, ltm virtual, ltm virtual-address):
 - `create ltm pool ... members add { ... }` auto-creates missing nodes with
   default settings, which is why rollback re-creates nodes first.
 - Safe order: virtual servers -> pool -> nodes; rollback is the reverse.
+- `delete ltm monitor` is refused while a node, pool, pool member or
+  inheriting monitor references the monitor, and default (F5-supplied)
+  monitors cannot be deleted at all.
+- `create ltm monitor <type> <name> defaults-from <parent> ...` takes the
+  same property names iControl REST reports, in kebab-case instead of
+  camelCase (`timeUntilUp` -> `time-until-up`). REST reports every
+  property with its *effective* (inherited) value, so the rollback emits
+  `defaults-from` plus only the properties whose value differs from the
+  parent's: the effective configuration, not necessarily the exact set of
+  local overrides. `send`/`recv` strings are quoted.
 
 Unconfirmed in the official reference: the '.' port separator for IPv6
-pool members (it is documented for virtual destinations only).
+pool members (it is documented for virtual destinations only), and that
+REST's literal `\r\n` in send strings is what tmsh expects inside the
+quotes (it matches `tmsh list` output, so it is passed through verbatim
+rather than escaped).
 """
 
 from __future__ import annotations
 
 import ipaddress
+import re
+from typing import Any
 
-from .models import Node, Pool, PoolMember, VirtualServer
+from .models import Monitor, Node, Pool, PoolMember, VirtualServer
 
 ANY_SOURCE = {"", "0.0.0.0/0", "::/0"}
+
+# REST keys whose kebab-case form the generic camelCase split gets wrong
+# (a digit does not start a new word).
+TMSH_KEY_OVERRIDES = {"data0rtt": "data-0rtt", "allowHttp10": "allow-http-10"}
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
+# Free-text properties the tmsh reference wants quoted, whatever they hold.
+ALWAYS_QUOTED_KEYS = {
+    "send",
+    "recv",
+    "recv-disable",
+    "description",
+    "username",
+    "server-name",
+    "args",
+    "run",
+    "ciphers",
+}
+_NEEDS_QUOTES_RE = re.compile(r'[\s"{};#\\$\[\]]')
+MASKED_VALUE_PREFIX = "$M$"  # how REST reports a password/passphrase
 
 
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _quote_verbatim(text: str) -> str:
+    # Backslashes are kept: REST already reports send strings with the
+    # literal \r\n that tmsh expects inside the quotes.
+    return '"' + text.replace('"', '\\"') + '"'
+
+
+def tmsh_key(rest_key: str) -> str:
+    override = TMSH_KEY_OVERRIDES.get(rest_key)
+    return override or _CAMEL_BOUNDARY_RE.sub("-", rest_key).lower()
+
+
+def _render_scalar(key: str, value: Any) -> str:
+    text = str(value).lower() if isinstance(value, bool) else str(value)
+    if key in ALWAYS_QUOTED_KEYS or not text or _NEEDS_QUOTES_RE.search(text):
+        return _quote_verbatim(text)
+    return text
+
+
+def _render_properties(properties: dict[str, Any]) -> str:
+    return " ".join(
+        f"{tmsh_key(key)} {_render_value(tmsh_key(key), properties[key])}"
+        for key in sorted(properties, key=tmsh_key)
+    )
+
+
+def _unnamed(entry: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in entry.items() if key != "name"}
+
+
+def _render_value(key: str, value: Any) -> str:
+    if isinstance(value, dict):
+        return f"{{ {_render_properties(value)} }}"
+    if isinstance(value, list):
+        if value and all(isinstance(entry, dict) and "name" in entry for entry in value):
+            # A named subcollection (e.g. cert-key-chain { app { cert ... } }).
+            entries = " ".join(
+                f"{entry['name']} {{ {_render_properties(_unnamed(entry))} }}" for entry in value
+            )
+            return f"{{ {entries} }}"
+        return f"{{ {' '.join(_render_scalar(key, entry) for entry in value)} }}"
+    return _render_scalar(key, value)
+
+
+def _is_masked(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith(MASKED_VALUE_PREFIX)
+
+
+def _without_secrets(value: Any, key: str, omitted: set[str]) -> Any:
+    """`value` with every masked secret removed (None when it is one);
+    `omitted` collects the tmsh names of what was dropped."""
+    if _is_masked(value):
+        omitted.add(tmsh_key(key))
+        return None
+    if isinstance(value, dict):
+        cleaned = {}
+        for nested_key, nested in value.items():
+            kept = _without_secrets(nested, nested_key, omitted)
+            if kept is not None:
+                cleaned[nested_key] = kept
+        return cleaned
+    if isinstance(value, list):
+        kept_entries = [_without_secrets(entry, key, omitted) for entry in value]
+        return [entry for entry in kept_entries if entry is not None]
+    return value
+
+
+def attribute_diff(
+    attributes: dict[str, Any], parent_attributes: dict[str, Any] | None
+) -> tuple[dict[str, Any], list[str]]:
+    """(properties to emit, omitted secret names). With a parent, only the
+    properties whose value differs from it; without one, every property."""
+    omitted: set[str] = set()
+    properties = {}
+    for key, value in attributes.items():
+        if parent_attributes is not None and parent_attributes.get(key) == value:
+            continue
+        kept = _without_secrets(value, key, omitted)
+        if kept is not None:
+            properties[key] = kept
+    return properties, sorted(omitted)
+
+
+def masked_secret_keys(attributes: dict[str, Any]) -> list[str]:
+    _, omitted = attribute_diff(attributes, None)
+    return omitted
+
+
+def _create_with_defaults(
+    component: str, full_path: str, defaults_from: str, properties: dict[str, Any]
+) -> str:
+    parts = [f"create {component} {full_path}"]
+    if defaults_from:
+        parts.append(f"defaults-from {defaults_from}")
+    if properties:
+        parts.append(_render_properties(properties))
+    return " ".join(parts)
+
+
+def delete_monitor_command(monitor_type: str, monitor_path: str) -> str:
+    return f"delete ltm monitor {monitor_type} {monitor_path}"
+
+
+def monitor_create_command(monitor: Monitor, parent: Monitor | None) -> str:
+    """Re-create a monitor from its parent plus the properties that differ
+    from it (every property when the parent is not in the collection)."""
+    properties, _ = attribute_diff(
+        monitor.attributes, parent.attributes if parent is not None else None
+    )
+    return _create_with_defaults(
+        f"ltm monitor {monitor.type}", monitor.full_path, monitor.defaults_from, properties
+    )
 
 
 def member_ref(node_path: str, port: str) -> str:

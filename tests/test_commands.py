@@ -1,7 +1,7 @@
 """tmsh command text builders: syntax per the official tmsh reference."""
 
 from f5audit import commands
-from f5audit.models import Node, Pool, PoolMember, VirtualProfile, VirtualServer
+from f5audit.models import Monitor, Node, Pool, PoolMember, VirtualProfile, VirtualServer
 
 
 def member(node_path, port, **kwargs):
@@ -124,3 +124,87 @@ def test_delete_commands():
     assert commands.delete_node_command("/Common/n") == "delete ltm node /Common/n"
     assert commands.delete_pool_command("/Common/p") == "delete ltm pool /Common/p"
     assert commands.delete_virtual_command("/Common/v") == "delete ltm virtual /Common/v"
+
+
+def make_monitor(name, defaults_from="", **attributes):
+    return Monitor(f"/Common/{name}", "Common", name, "https", defaults_from, "", attributes)
+
+
+def test_tmsh_key_maps_camel_case_and_digit_boundaries():
+    assert commands.tmsh_key("timeUntilUp") == "time-until-up"
+    assert commands.tmsh_key("ipDscp") == "ip-dscp"
+    assert commands.tmsh_key("certKeyChain") == "cert-key-chain"
+    assert commands.tmsh_key("interval") == "interval"
+    assert commands.tmsh_key("data0rtt") == "data-0rtt"
+    assert commands.tmsh_key("allowHttp10") == "allow-http-10"
+
+
+def test_send_strings_are_quoted_verbatim():
+    # REST already reports the literal \r\n tmsh expects; it must not be doubled.
+    monitor = make_monitor("m", send="GET / HTTP/1.1\\r\\n\\r\\n", recv='say "hi"', interval=5)
+    assert commands.monitor_create_command(monitor, None) == (
+        'create ltm monitor https /Common/m interval 5 recv "say \\"hi\\"" '
+        'send "GET / HTTP/1.1\\r\\n\\r\\n"'
+    )
+
+
+def test_monitor_create_command_emits_only_differences_from_parent():
+    parent = make_monitor("https", interval=5, timeout=16, send="GET /\\r\\n", recv="")
+    child = make_monitor(
+        "mon-x",
+        "/Common/https",
+        interval=10,
+        timeout=31,
+        send="GET /health HTTP/1.1\\r\\nHost: app.example.net\\r\\n\\r\\n",
+        recv="200 OK",
+    )
+    assert commands.monitor_create_command(child, parent) == (
+        "create ltm monitor https /Common/mon-x defaults-from /Common/https interval 10 "
+        'recv "200 OK" send "GET /health HTTP/1.1\\r\\nHost: app.example.net\\r\\n\\r\\n" '
+        "timeout 31"
+    )
+    equal = make_monitor("same", "/Common/https", interval=5, timeout=16)
+    assert commands.monitor_create_command(equal, parent) == (
+        "create ltm monitor https /Common/same defaults-from /Common/https"
+    )
+
+
+def test_monitor_create_command_without_parent_lists_everything():
+    monitor = make_monitor("mon-x", "/Part/https", interval=5, manualResume="disabled")
+    assert commands.monitor_create_command(monitor, None) == (
+        "create ltm monitor https /Common/mon-x defaults-from /Part/https interval 5 "
+        "manual-resume disabled"
+    )
+
+
+def test_attribute_diff_renders_nested_values_and_omits_masked_secrets():
+    attributes = {
+        "certKeyChain": [
+            {
+                "name": "app",
+                "cert": "/Common/app.crt",
+                "key": "/Common/app.key",
+                "passphrase": "$M$abc",
+            }
+        ],
+        "enforcement": {"maxHeaderSize": 32768, "unknownMethod": "allow"},
+        "ciphers": "DEFAULT:!SSLv3",
+        "sniDefault": "true",
+        "password": "$M$secret",
+        "tags": ["a", "b"],
+    }
+    properties, omitted = commands.attribute_diff(attributes, None)
+    assert omitted == ["passphrase", "password"]
+    assert commands.masked_secret_keys(attributes) == ["passphrase", "password"]
+    rendered = commands._render_properties(properties)
+    assert rendered == (
+        "cert-key-chain { app { cert /Common/app.crt key /Common/app.key } } "
+        'ciphers "DEFAULT:!SSLv3" enforcement { max-header-size 32768 unknown-method allow } '
+        "sni-default true tags { a b }"
+    )
+
+
+def test_delete_monitor_command():
+    assert commands.delete_monitor_command("https", "/Common/m") == (
+        "delete ltm monitor https /Common/m"
+    )

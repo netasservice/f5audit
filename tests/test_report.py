@@ -79,7 +79,11 @@ def test_orphan_sheets_only_contain_non_in_use_objects():
     assert "/Common/pool-dead" in pool_names
     assert "/Common/pool-web" not in pool_names
     monitor_names = [row[0] for row in tables["monitor_findings"].rows]
-    assert monitor_names == ["/Common/mon-orphan"]
+    assert monitor_names == [
+        "/Common/mon-child",
+        "/Common/mon-orphan",
+        "/Common/mon-parent",
+    ]
 
 
 def cells(table, row):
@@ -562,3 +566,40 @@ def test_iapp_owned_objects_get_no_delete_commands():
     assert "delete ltm node" not in chain[-1]
     inventory = inventory_row(tables, "/Common/node-dead", "/Common/pool-dead")
     assert inventory[CHANGE_COLUMNS] == ["", "", "", ""]
+
+
+def test_monitor_findings_commands_for_orphan_and_blank_for_manual_review():
+    _, tables = make_tables()
+    child = table_row(tables, "monitor_findings", "/Common/mon-child")
+    assert child["Verdict"] == Verdict.ORPHAN
+    assert child["Delete monitor"] == "delete ltm monitor https /Common/mon-child"
+    assert child["Create monitor (rollback)"] == (
+        "create ltm monitor https /Common/mon-child defaults-from /Common/mon-parent "
+        'recv "200 OK" send "GET /health HTTP/1.1\\r\\nHost: app.example.net\\r\\n\\r\\n"'
+    )
+    orphan = table_row(tables, "monitor_findings", "/Common/mon-orphan")
+    assert orphan["Create monitor (rollback)"] == (
+        "create ltm monitor http /Common/mon-orphan defaults-from /Common/http"
+    )
+    parent = table_row(tables, "monitor_findings", "/Common/mon-parent")
+    assert parent["Verdict"] == Verdict.MANUAL_REVIEW
+    assert parent["Delete monitor"] == ""
+    assert parent["Create monitor (rollback)"] == ""
+
+
+def test_monitor_rollback_notes_missing_parent_and_masked_secrets():
+    parsed = parse_collection(build_collection())
+    del parsed.monitors["/Common/mon-parent"]
+    parsed.monitors["/Common/mon-orphan"].attributes["password"] = "$M$masked"
+    parsed.monitors["/Common/mon-orphan"].raw_values = {"userDefined": "x"}
+    tables = analyze(parsed)
+    child = table_row(tables, "monitor_findings", "/Common/mon-child")
+    assert "parent is not in the collection" in child["Notes"]
+    assert child["Create monitor (rollback)"].startswith(
+        "create ltm monitor https /Common/mon-child defaults-from /Common/mon-parent "
+        "adaptive disabled"
+    )
+    orphan = table_row(tables, "monitor_findings", "/Common/mon-orphan")
+    assert "Rollback omits password" in orphan["Notes"]
+    assert "password" not in orphan["Create monitor (rollback)"]
+    assert "user-defined variables" in orphan["Notes"]

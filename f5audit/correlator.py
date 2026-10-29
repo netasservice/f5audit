@@ -39,6 +39,11 @@ BUILTIN_MONITOR_NAMES = {
 }
 
 
+# User kind recorded on the monitors the ltm default-node-monitor names:
+# every node with 'monitor default' inherits them.
+DEFAULT_NODE_MONITOR = "default-node-monitor"
+
+
 def is_builtin_monitor(full_path: str) -> bool:
     partition, _, name = full_path.strip("/").partition("/")
     return partition == "Common" and name in BUILTIN_MONITOR_NAMES
@@ -50,7 +55,10 @@ class Correlation:
     pool_to_virtuals: dict[str, set[str]] = field(default_factory=dict)
     pool_to_irules: dict[str, set[str]] = field(default_factory=dict)
     pool_to_policies: dict[str, set[str]] = field(default_factory=dict)
-    monitor_users: dict[str, set[str]] = field(default_factory=dict)
+    # Monitor -> {(kind, path)}: kind is "node", "pool", "member" (path is
+    # "<pool> <node>:<port>"), "monitor" (a defaults-from child) or
+    # DEFAULT_NODE_MONITOR (path "").
+    monitor_users: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
     # Virtual server -> every pool it can reach statically: default pool,
     # pools referenced by attached iRules and pools forwarded by attached
     # policies. Used by the dead-chain analysis.
@@ -159,12 +167,41 @@ def correlate(parsed: ParsedData) -> Correlation:
             if pool.partition in partitions:
                 _add(correlation.pool_dynamic_irules, pool.full_path, irule_path)
 
-    # 6. Monitor -> nodes/pools using it (node default monitors included).
+    # 6. Monitor -> its users as (kind, path): a node, a pool and a monitor
+    # can share one full path, so the kind travels with it.
     for node in parsed.nodes.values():
-        for monitor_ref in parse_monitor_refs(node.monitor, node.partition):
-            _add(correlation.monitor_users, monitor_ref, node.full_path)
+        if node.monitor.strip() in ("", "default"):
+            monitor_refs = parsed.default_node_monitors
+        else:
+            monitor_refs = parse_monitor_refs(node.monitor, node.partition)
+        for monitor_ref in monitor_refs:
+            _add(correlation.monitor_users, monitor_ref, ("node", node.full_path))
     for pool in parsed.pools.values():
         for monitor_ref in pool.monitors:
-            _add(correlation.monitor_users, monitor_ref, pool.full_path)
+            _add(correlation.monitor_users, monitor_ref, ("pool", pool.full_path))
+        for member in pool.members:
+            if member.monitor in ("", "default"):
+                continue
+            member_id = f"{pool.full_path} {member.node_full_path}:{member.port}"
+            for monitor_ref in parse_monitor_refs(member.monitor, member.partition):
+                _add(correlation.monitor_users, monitor_ref, ("member", member_id))
+    for monitor_ref in parsed.default_node_monitors:
+        _add(correlation.monitor_users, monitor_ref, (DEFAULT_NODE_MONITOR, ""))
+    for monitor in parsed.monitors.values():
+        if monitor.defaults_from in parsed.monitors:
+            _add(correlation.monitor_users, monitor.defaults_from, ("monitor", monitor.full_path))
 
     return correlation
+
+
+def describe_monitor_users(users: set[tuple[str, str]]) -> str:
+    labels = []
+    for kind, path in sorted(users):
+        if kind == DEFAULT_NODE_MONITOR:
+            labels.append("ltm default-node-monitor")
+        elif kind == "member":
+            pool_path, member = path.split(" ", 1)
+            labels.append(f"member {member} of pool {pool_path}")
+        else:
+            labels.append(f"{kind} {path}")
+    return ", ".join(labels)

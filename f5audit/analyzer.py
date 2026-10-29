@@ -34,10 +34,16 @@ Cross-cutting rules (spec section 8):
   policy is edited by hand, on a virtual server that is likely in use.
 - Incomplete inventory (denied partitions/endpoints) degrades orphan
   verdicts, because a reference could live in an invisible partition.
-- Objects owned by an iApp (nodes, pools, virtual servers) are capped at
-  MANUAL REVIEW: with strict updates tmsh refuses to modify them, and
-  without it the next iApp reconfigure recreates them, so removal is an
-  iApp change, never a tmsh cleanup.
+- Objects owned by an iApp (nodes, pools, virtual servers, monitors) are
+  capped at MANUAL REVIEW: with strict updates tmsh refuses to modify
+  them, and without it the next iApp reconfigure recreates them, so
+  removal is an iApp change, never a tmsh cleanup.
+- A monitor's users are nodes, pools, pool members, the monitors that
+  inherit from it (defaults-from) and the ltm default-node-monitor. A
+  parent whose only users are ORPHAN children is held at MANUAL REVIEW:
+  it becomes deletable once they are gone. Without the default-node-monitor
+  dataset an unused monitor is UNRELIABLE, since every node with
+  'monitor default' could be using it.
 """
 
 from __future__ import annotations
@@ -45,7 +51,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from .correlator import Correlation, is_builtin_monitor
+from .correlator import (
+    DEFAULT_NODE_MONITOR,
+    Correlation,
+    describe_monitor_users,
+    is_builtin_monitor,
+)
 from .parsing import ParsedData
 
 
@@ -263,8 +274,15 @@ class Analyzer:
                 "ltm/rule was not readable: pool orphan verdicts are capped "
                 "at MANUAL REVIEW (an iRule could reference them)."
             )
+        if not self.parsed.default_node_monitor_collected:
+            result.warnings.append(
+                "ltm/default-node-monitor was not collected: unused monitors are "
+                "UNRELIABLE (incomplete inventory) because every node with "
+                "'monitor default' could use them. Resume collect --save-raw on "
+                "this raw directory to backfill it."
+            )
         for endpoint in system.missing_endpoints:
-            if "/ltm/rule" not in endpoint:
+            if "/ltm/rule" not in endpoint and "/ltm/default-node-monitor" not in endpoint:
                 result.warnings.append(f"Endpoint not collected: {endpoint}")
 
     # ------------------------------------------------------------------
@@ -651,24 +669,77 @@ class Analyzer:
                 "Not referenced by any virtual server, iRule or policy.",
             )
 
+    def _monitor_chain_depth(self, path: str) -> int:
+        """Length of the defaults-from chain below `path` inside the inventory."""
+        depth, seen = 0, set()
+        monitor = self.parsed.monitors.get(path)
+        while (
+            monitor is not None
+            and monitor.defaults_from in self.parsed.monitors
+            and monitor.full_path not in seen
+        ):
+            seen.add(monitor.full_path)
+            monitor = self.parsed.monitors[monitor.defaults_from]
+            depth += 1
+        return depth
+
     def _analyze_monitors(self, result: AnalysisResult) -> None:
-        for path, _monitor in self.parsed.monitors.items():
+        # Children first: a parent's verdict depends on its children's.
+        order = sorted(self.parsed.monitors, key=lambda p: (-self._monitor_chain_depth(p), p))
+        for path in order:
             if is_builtin_monitor(path):
                 result.monitor_verdicts[path] = ObjectVerdict(
                     Verdict.IN_USE, "F5 built-in monitor (excluded from orphan analysis)."
                 )
                 continue
-            users = self.correlation.monitor_users.get(path)
-            if users:
-                result.monitor_verdicts[path] = ObjectVerdict(Verdict.IN_USE)
+            users = self.correlation.monitor_users.get(path, set())
+            if any(kind == DEFAULT_NODE_MONITOR for kind, _ in users):
+                result.monitor_verdicts[path] = ObjectVerdict(
+                    Verdict.IN_USE, "Configured as the ltm default-node-monitor."
+                )
+                continue
+            orphan_children = {
+                child
+                for kind, child in users
+                if kind == "monitor" and result.monitor_verdicts[child].verdict == Verdict.ORPHAN
+            }
+            live_users = {
+                (kind, user)
+                for kind, user in users
+                if not (kind == "monitor" and user in orphan_children)
+            }
+            if live_users:
+                result.monitor_verdicts[path] = ObjectVerdict(
+                    Verdict.IN_USE, f"Used by: {describe_monitor_users(live_users)}."
+                )
+            elif orphan_children:
+                children = ", ".join(sorted(orphan_children))
+                result.monitor_verdicts[path] = ObjectVerdict(
+                    Verdict.MANUAL_REVIEW,
+                    "Only used as the defaults-from parent of removal-candidate "
+                    f"monitor(s) {children}; deletable once they are removed.",
+                )
+                result.manual_review.append(
+                    ManualReviewItem(
+                        "monitor", path, "Only the parent of removal-candidate monitor(s)", children
+                    )
+                )
             elif not self.inventory_complete:
                 result.monitor_verdicts[path] = ObjectVerdict(
                     Verdict.UNRELIABLE_INVENTORY,
                     "Unused in visible partitions, but some partitions were not readable.",
                 )
+            elif not self.parsed.default_node_monitor_collected:
+                result.monitor_verdicts[path] = ObjectVerdict(
+                    Verdict.UNRELIABLE_INVENTORY,
+                    "Unused, but ltm/default-node-monitor was not collected and every "
+                    "node with 'monitor default' could use it. Resume collect "
+                    "--save-raw on this raw directory to backfill it.",
+                )
             else:
                 result.monitor_verdicts[path] = ObjectVerdict(
-                    Verdict.ORPHAN, "Not used by any node or pool."
+                    Verdict.ORPHAN,
+                    "Not used by any node, pool, pool member or monitor (as defaults-from).",
                 )
 
     # ------------------------------------------------------------------
@@ -708,6 +779,10 @@ class Analyzer:
         owners += [
             ("virtual_server", result.virtual_verdicts, path, virtual.app_service)
             for path, virtual in self.parsed.virtuals.items()
+        ]
+        owners += [
+            ("monitor", result.monitor_verdicts, path, monitor.app_service)
+            for path, monitor in self.parsed.monitors.items()
         ]
         for object_type, verdicts, path, app_service in owners:
             current = verdicts.get(path)

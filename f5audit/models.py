@@ -7,6 +7,7 @@ minimal on the target VDI machine.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -45,6 +46,7 @@ class PoolMember:
     ratio: int = 1
     connection_limit: int = 0
     app_service: str = ""
+    monitor: str = ""  # member-level monitor as configured ("default", "/Common/x"), "" if unset
 
 
 @dataclass
@@ -134,6 +136,13 @@ class Monitor:
     partition: str
     name: str
     type: str = ""
+    defaults_from: str = ""  # normalized parent path, "" for a root (built-in) monitor
+    app_service: str = ""  # owning iApp, empty if none
+    # Configurable REST properties (metadata and *Reference links dropped),
+    # with the inherited values REST reports: the rollback diffs them
+    # against the parent's.
+    attributes: dict[str, Any] = field(default_factory=dict)
+    raw_values: dict[str, Any] = field(default_factory=dict)  # apiRawValues (external monitors)
 
 
 @dataclass

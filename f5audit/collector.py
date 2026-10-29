@@ -202,6 +202,7 @@ class Collector:
             self._collect_virtual_details()
             self._collect_policy_rules()
             self._collect_monitors(partitions)
+            self._collect_default_node_monitor()
             self._collect_stats()
             self._collect_network()
         except F5ClientError as exc:
@@ -320,6 +321,14 @@ class Collector:
 
     def _monitor_type_missing(self, monitor_type: str) -> bool:
         return not any(key.startswith(f"ltm_monitor_{monitor_type}@") for key in self.data.datasets)
+
+    def _collect_default_node_monitor(self) -> None:
+        # One document, not a collection: the monitors every node with
+        # 'monitor default' inherits. Not tolerated as 404 on purpose: a
+        # missing dataset degrades unused-monitor verdicts, so it is listed.
+        self._fetch(
+            "ltm_default_node_monitor", "/mgmt/tm/ltm/default-node-monitor", collection=False
+        )
 
     def _collect_stats(self) -> None:
         logger.info("Collecting statistics...")

@@ -2,7 +2,7 @@
 
 from f5audit.analyzer import POINT_IN_TIME_NOTE, Analyzer, Verdict
 from f5audit.correlator import correlate
-from f5audit.models import IRule, Policy, Pool, PoolMember, VirtualServer
+from f5audit.models import IRule, Monitor, Node, Policy, Pool, PoolMember, VirtualServer
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
 
@@ -477,6 +477,103 @@ def test_builtin_monitor_never_orphan():
     result = analyze()
     # /Common/http is unused in the fixture but is an F5 factory monitor.
     assert result.monitor_verdicts["/Common/http"].verdict == Verdict.IN_USE
+
+
+def test_used_monitor_notes_name_its_users():
+    result = analyze()
+    notes = result.monitor_verdicts["/Common/mon-used"].notes
+    assert "pool /Common/pool-dead" in notes
+    assert "pool /Common/pool-web" in notes
+
+
+def test_member_level_monitor_is_in_use():
+    result = analyze()
+    verdict = result.monitor_verdicts["/Common/mon-member-only"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "member /Common/node-web-1:80 of pool /Common/pool-web" in verdict.notes
+
+
+def test_parent_of_orphan_child_is_manual_review_and_child_is_orphan():
+    result = analyze()
+    assert result.monitor_verdicts["/Common/mon-child"].verdict == Verdict.ORPHAN
+    parent = result.monitor_verdicts["/Common/mon-parent"]
+    assert parent.verdict == Verdict.MANUAL_REVIEW
+    assert "/Common/mon-child" in parent.notes
+    assert any(
+        item.object_type == "monitor" and item.full_path == "/Common/mon-parent"
+        for item in result.manual_review
+    )
+
+
+def test_parent_of_used_child_is_in_use():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-web"].monitors.append("/Common/mon-child")
+
+    result = analyze(mutate=mutate)
+    assert result.monitor_verdicts["/Common/mon-child"].verdict == Verdict.IN_USE
+    parent = result.monitor_verdicts["/Common/mon-parent"]
+    assert parent.verdict == Verdict.IN_USE
+    assert "monitor /Common/mon-child" in parent.notes
+
+
+def test_custom_default_node_monitor_is_in_use():
+    def mutate(parsed):
+        parsed.default_node_monitors = ["/Common/mon-orphan"]
+
+    result = analyze(mutate=mutate)
+    verdict = result.monitor_verdicts["/Common/mon-orphan"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "default-node-monitor" in verdict.notes
+
+
+def test_node_with_default_monitor_uses_the_default_node_monitors():
+    def mutate(parsed):
+        parsed.default_node_monitors = ["/Common/mon-orphan"]
+        parsed.nodes["/Common/node-web-1"].monitor = "default"
+
+    result = analyze(mutate=mutate)
+    assert result.monitor_verdicts["/Common/mon-orphan"].verdict == Verdict.IN_USE
+
+
+def test_unused_monitor_unreliable_without_default_node_monitor_dataset():
+    parsed = parse_collection(build_collection(default_node_monitor=False))
+    result = Analyzer(parsed, correlate(parsed)).run()
+    verdict = result.monitor_verdicts["/Common/mon-orphan"]
+    assert verdict.verdict == Verdict.UNRELIABLE_INVENTORY
+    assert "default-node-monitor" in verdict.notes
+    assert any("default-node-monitor" in warning for warning in result.warnings)
+    # Used monitors are unaffected.
+    assert result.monitor_verdicts["/Common/mon-used"].verdict == Verdict.IN_USE
+
+
+def test_unused_monitor_unreliable_with_denied_partition():
+    result = analyze(denied=[{"partition": "Hidden", "endpoint": "/mgmt/tm/ltm/pool"}])
+    assert result.monitor_verdicts["/Common/mon-orphan"].verdict == Verdict.UNRELIABLE_INVENTORY
+
+
+def test_iapp_owned_monitor_is_manual_review():
+    def mutate(parsed):
+        parsed.monitors["/Common/mon-orphan"].app_service = "/Common/app1.app/app1"
+
+    result = analyze(mutate=mutate)
+    verdict = result.monitor_verdicts["/Common/mon-orphan"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "/Common/app1.app/app1" in verdict.notes
+
+
+def test_monitor_user_kinds_do_not_collide_on_a_shared_name():
+    # A node, a pool and a monitor can share one full path: only the pool
+    # uses the monitor here, and that must not be confused with the node.
+    def mutate(parsed):
+        shared = "/Common/shared"
+        parsed.monitors[shared] = Monitor(shared, "Common", "shared", "http", "/Common/http")
+        parsed.nodes[shared] = Node(shared, "Common", "shared", address="10.0.0.77")
+        parsed.pools[shared] = Pool(shared, "Common", "shared", monitors=[shared])
+
+    result = analyze(mutate=mutate)
+    verdict = result.monitor_verdicts["/Common/shared"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert verdict.notes == "Used by: pool /Common/shared."
 
 
 # ---------------------------------------------------------------------------
