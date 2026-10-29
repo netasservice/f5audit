@@ -93,5 +93,29 @@
     "cipherlist": "DEFAULT:+SHA:+3DES",
     "compatibility": "enabled",
     "defaultsFrom": "/Common/https"
+  },
+  {
+    "kind": "tm:ltm:monitor:https:httpsstate",
+    "name": "mon-dead-only",
+    "partition": "Common",
+    "fullPath": "/Common/mon-dead-only",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/monitor/https/~Common~mon-dead-only?ver=17.5.1",
+    "destination": "*:*",
+    "interval": 10,
+    "timeout": 31,
+    "send": "GET /\\r\\n",
+    "recv": "alive",
+    "recvDisable": "",
+    "timeUntilUp": 0,
+    "upInterval": 0,
+    "manualResume": "disabled",
+    "transparent": "disabled",
+    "reverse": "disabled",
+    "ipDscp": 0,
+    "adaptive": "disabled",
+    "cipherlist": "DEFAULT:+SHA:+3DES",
+    "compatibility": "enabled",
+    "defaultsFrom": "/Common/https"
   }
 ]

@@ -482,8 +482,7 @@ def test_builtin_monitor_never_orphan():
 def test_used_monitor_notes_name_its_users():
     result = analyze()
     notes = result.monitor_verdicts["/Common/mon-used"].notes
-    assert "pool /Common/pool-dead" in notes
-    assert "pool /Common/pool-web" in notes
+    assert notes == "Used by: pool /Common/pool-web."
 
 
 def test_member_level_monitor_is_in_use():
@@ -491,6 +490,102 @@ def test_member_level_monitor_is_in_use():
     verdict = result.monitor_verdicts["/Common/mon-member-only"]
     assert verdict.verdict == Verdict.IN_USE
     assert "member /Common/node-web-1:80 of pool /Common/pool-web" in verdict.notes
+
+
+def test_monitor_used_only_by_offline_chain_is_offline():
+    result = analyze()
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.OFFLINE_CANDIDATE
+    assert "pool /Common/pool-dead" in verdict.notes
+    assert "modify ltm pool <pool> monitor none" in verdict.notes
+    assert verdict.notes.endswith(POINT_IN_TIME_NOTE)
+
+
+def test_monitor_shared_with_a_live_pool_stays_in_use():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-web"].monitors.append("/Common/mon-dead-only")
+
+    result = analyze(mutate=mutate)
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "pool /Common/pool-web" in verdict.notes
+
+
+def test_monitor_on_a_member_of_a_live_pool_stays_in_use():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-web"].members[0].monitor = "/Common/mon-dead-only"
+
+    result = analyze(mutate=mutate)
+    assert result.monitor_verdicts["/Common/mon-dead-only"].verdict == Verdict.IN_USE
+
+
+def test_monitor_of_a_held_pool_stays_in_use():
+    # pool-dead is held at MANUAL REVIEW because node-dead is alive in pool-web.
+    result = analyze(mutate=share_dead_node_with_live_pool)
+    assert result.pool_verdicts["/Common/pool-dead"].verdict == Verdict.MANUAL_REVIEW
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "pool /Common/pool-dead" in verdict.notes
+
+
+def test_monitor_of_a_dead_pool_behind_a_live_virtual_stays_in_use():
+    def mutate(parsed):
+        # vs-web reaches pool-dead too, and vs-web is alive.
+        parsed.virtuals["/Common/vs-web"].irules.append("/Common/irule-dead")
+        parsed.irules["/Common/irule-dead"] = IRule(
+            "/Common/irule-dead",
+            "Common",
+            "irule-dead",
+            "pool /Common/pool-dead",
+            referenced_pools=["/Common/pool-dead"],
+        )
+
+    result = analyze(mutate=mutate)
+    assert result.monitor_verdicts["/Common/mon-dead-only"].verdict != Verdict.OFFLINE_CANDIDATE
+
+
+def test_offline_monitor_unreliable_with_incomplete_evidence():
+    result = analyze(denied=[{"partition": "Hidden", "endpoint": "/mgmt/tm/ltm/pool"}])
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.UNRELIABLE_INVENTORY
+    assert "partitions were not readable" in verdict.notes
+
+    parsed = parse_collection(build_collection(default_node_monitor=False))
+    result = Analyzer(parsed, correlate(parsed)).run()
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.UNRELIABLE_INVENTORY
+    assert "default-node-monitor" in verdict.notes
+
+
+def test_offline_monitor_follows_the_standby_rule():
+    # Without --allow-standby no user is OFFLINE, so the monitor is plainly in use.
+    result = analyze(standby=True)
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert verdict.notes == "Used by: pool /Common/pool-dead."
+    result = analyze(standby=True, allow_standby=True)
+    assert result.monitor_verdicts["/Common/mon-dead-only"].verdict == Verdict.UNRELIABLE_STANDBY
+
+
+def test_monitor_used_only_by_orphan_pool_is_manual_review():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-orphan"].monitors = ["/Common/mon-orphan"]
+
+    result = analyze(mutate=mutate)
+    verdict = result.monitor_verdicts["/Common/mon-orphan"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "pool /Common/pool-orphan" in verdict.notes
+
+
+def test_monitor_with_offline_and_orphan_users_is_manual_review():
+    def mutate(parsed):
+        parsed.pools["/Common/pool-orphan"].monitors = ["/Common/mon-dead-only"]
+
+    result = analyze(mutate=mutate)
+    verdict = result.monitor_verdicts["/Common/mon-dead-only"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "pool /Common/pool-dead" in verdict.notes
+    assert "pool /Common/pool-orphan" in verdict.notes
 
 
 def test_parent_of_orphan_child_is_manual_review_and_child_is_orphan():
@@ -562,18 +657,24 @@ def test_iapp_owned_monitor_is_manual_review():
 
 
 def test_monitor_user_kinds_do_not_collide_on_a_shared_name():
-    # A node, a pool and a monitor can share one full path: only the pool
-    # uses the monitor here, and that must not be confused with the node.
+    # A node, a pool and a monitor can share one full path. The monitor is
+    # used only by the pool, which is ORPHAN; the node is IN USE (a member of
+    # pool-web) and must not be mistaken for the user.
     def mutate(parsed):
         shared = "/Common/shared"
         parsed.monitors[shared] = Monitor(shared, "Common", "shared", "http", "/Common/http")
         parsed.nodes[shared] = Node(shared, "Common", "shared", address="10.0.0.77")
+        parsed.pools["/Common/pool-web"].members.append(
+            PoolMember(shared, "80", "Common", availability="up")
+        )
         parsed.pools[shared] = Pool(shared, "Common", "shared", monitors=[shared])
 
     result = analyze(mutate=mutate)
+    assert result.node_verdicts["/Common/shared"].verdict == Verdict.IN_USE
+    assert result.pool_verdicts["/Common/shared"].verdict == Verdict.ORPHAN
     verdict = result.monitor_verdicts["/Common/shared"]
-    assert verdict.verdict == Verdict.IN_USE
-    assert verdict.notes == "Used by: pool /Common/shared."
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "pool /Common/shared" in verdict.notes
 
 
 # ---------------------------------------------------------------------------

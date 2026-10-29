@@ -27,7 +27,7 @@
     "name": "pool-dead",
     "partition": "Common",
     "fullPath": "/Common/pool-dead",
-    "monitor": "/Common/mon-used ",
+    "monitor": "/Common/mon-dead-only ",
     "loadBalancingMode": "round-robin"
   },
   {

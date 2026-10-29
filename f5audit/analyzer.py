@@ -40,10 +40,15 @@ Cross-cutting rules (spec section 8):
   removal is an iApp change, never a tmsh cleanup.
 - A monitor's users are nodes, pools, pool members, the monitors that
   inherit from it (defaults-from) and the ltm default-node-monitor. A
-  parent whose only users are ORPHAN children is held at MANUAL REVIEW:
-  it becomes deletable once they are gone. Without the default-node-monitor
-  dataset an unused monitor is UNRELIABLE, since every node with
-  'monitor default' could be using it.
+  monitor is never a stronger removal candidate than its weakest user:
+  one live user (IN USE, MANUAL REVIEW, INACTIVE, UNRELIABLE) keeps it
+  IN USE; when every user is an OFFLINE decommission candidate (for a
+  pool, with every virtual server reaching it) the monitor is OFFLINE
+  too, through the same standby and inventory degradations; when its
+  only users are ORPHAN objects it is held at MANUAL REVIEW, deletable
+  once they are gone. Without the default-node-monitor dataset an unused
+  monitor is UNRELIABLE, since every node with 'monitor default' could be
+  using it.
 """
 
 from __future__ import annotations
@@ -79,6 +84,9 @@ UNMONITORED_NODE_STATES = {"", "unknown", "unchecked"}
 
 # Removal-candidate verdicts that the iApp ceiling degrades.
 IAPP_CAPPED_VERDICTS = {Verdict.ORPHAN, Verdict.OFFLINE_CANDIDATE, Verdict.INACTIVE}
+# Verdicts under which a monitor's user counts as offline: the OFFLINE
+# candidate itself and its --allow-standby degradation.
+OFFLINE_USER_VERDICTS = {Verdict.OFFLINE_CANDIDATE, Verdict.UNRELIABLE_STANDBY}
 
 POINT_IN_TIME_NOTE = (
     "Availability is point-in-time; confirm with the config owner that this is not maintenance."
@@ -89,6 +97,9 @@ POINT_IN_TIME_NOTE = (
 class ObjectVerdict:
     verdict: str
     notes: str = ""
+
+
+_LIVE = ObjectVerdict("IN USE")
 
 
 @dataclass
@@ -683,6 +694,79 @@ class Analyzer:
             depth += 1
         return depth
 
+    def _monitor_user_state(self, user: tuple[str, str], result: AnalysisResult) -> str:
+        """'offline' when the user is an OFFLINE decommission candidate (for a
+        pool or pool member: the pool and every virtual server reaching it),
+        'orphan' when it is ORPHAN, otherwise 'live'. A user at MANUAL REVIEW,
+        INACTIVE or UNRELIABLE is live: a monitor is never a stronger
+        candidate than its weakest user."""
+        kind, path = user
+        if kind in ("pool", "member"):
+            pool_path = path.split(" ", 1)[0]
+            verdict = result.pool_verdicts.get(pool_path)
+            if verdict is None:
+                return "live"
+            if verdict.verdict == Verdict.ORPHAN:
+                return "orphan"
+            virtuals = self.correlation.pool_to_virtuals.get(pool_path, set())
+            chain_offline = all(
+                result.virtual_verdicts.get(vs, _LIVE).verdict in OFFLINE_USER_VERDICTS
+                for vs in virtuals
+            )
+            if (
+                verdict.verdict in OFFLINE_USER_VERDICTS
+                and pool_path in result.offline_pools
+                and chain_offline
+            ):
+                return "offline"
+            return "live"
+        verdicts = {"node": result.node_verdicts, "monitor": result.monitor_verdicts}.get(kind)
+        verdict = verdicts.get(path) if verdicts is not None else None
+        if verdict is None:
+            return "live"
+        if verdict.verdict in OFFLINE_USER_VERDICTS:
+            return "offline"
+        return "orphan" if verdict.verdict == Verdict.ORPHAN else "live"
+
+    def _offline_monitor_verdict(
+        self, result: AnalysisResult, path: str, offline_users: set[tuple[str, str]]
+    ) -> None:
+        """Every user is an OFFLINE candidate. Needs complete evidence (a hidden
+        partition or the default node monitor could still use it), then the
+        usual standby degradation."""
+        users = describe_monitor_users(offline_users)
+        if not self.inventory_complete or not self.parsed.default_node_monitor_collected:
+            gap = (
+                "some partitions were not readable"
+                if not self.inventory_complete
+                else "ltm/default-node-monitor was not collected"
+            )
+            result.monitor_verdicts[path] = ObjectVerdict(
+                Verdict.UNRELIABLE_INVENTORY,
+                f"Every visible user is an offline decommission candidate ({users}), "
+                f"but {gap}, so another user could exist.",
+            )
+            return
+        note = (
+            f"Every user is an offline decommission candidate: {users}. tmsh refuses "
+            "the delete while they reference it: delete them first, or detach it "
+            "(modify ltm pool <pool> monitor none / modify ltm node <node> monitor "
+            "default). " + POINT_IN_TIME_NOTE
+        )
+        emitted = self._offline_verdict(
+            result,
+            result.monitor_verdicts,
+            "monitor",
+            path,
+            note,
+            dynamic_irules=set(),
+            held_pools={},
+        )
+        if not emitted:
+            # Unreachable in practice (no user is OFFLINE on a standby unit
+            # without --allow-standby), kept so every path sets a verdict.
+            result.monitor_verdicts[path] = ObjectVerdict(Verdict.IN_USE, f"Used by: {users}.")
+
     def _analyze_monitors(self, result: AnalysisResult) -> None:
         # Children first: a parent's verdict depends on its children's.
         order = sorted(self.parsed.monitors, key=lambda p: (-self._monitor_chain_depth(p), p))
@@ -698,31 +782,25 @@ class Analyzer:
                     Verdict.IN_USE, "Configured as the ltm default-node-monitor."
                 )
                 continue
-            orphan_children = {
-                child
-                for kind, child in users
-                if kind == "monitor" and result.monitor_verdicts[child].verdict == Verdict.ORPHAN
-            }
-            live_users = {
-                (kind, user)
-                for kind, user in users
-                if not (kind == "monitor" and user in orphan_children)
-            }
+            states = {user: self._monitor_user_state(user, result) for user in users}
+            live_users = {user for user, state in states.items() if state == "live"}
+            offline_users = {user for user, state in states.items() if state == "offline"}
+            orphan_users = {user for user, state in states.items() if state == "orphan"}
             if live_users:
                 result.monitor_verdicts[path] = ObjectVerdict(
                     Verdict.IN_USE, f"Used by: {describe_monitor_users(live_users)}."
                 )
-            elif orphan_children:
-                children = ", ".join(sorted(orphan_children))
+            elif offline_users and not orphan_users:
+                self._offline_monitor_verdict(result, path, offline_users)
+            elif orphan_users:
+                candidates = describe_monitor_users(orphan_users | offline_users)
                 result.monitor_verdicts[path] = ObjectVerdict(
                     Verdict.MANUAL_REVIEW,
-                    "Only used as the defaults-from parent of removal-candidate "
-                    f"monitor(s) {children}; deletable once they are removed.",
+                    f"Only used by removal candidate(s): {candidates}; deletable once "
+                    "they are removed.",
                 )
                 result.manual_review.append(
-                    ManualReviewItem(
-                        "monitor", path, "Only the parent of removal-candidate monitor(s)", children
-                    )
+                    ManualReviewItem("monitor", path, "Only used by removal candidates", candidates)
                 )
             elif not self.inventory_complete:
                 result.monitor_verdicts[path] = ObjectVerdict(
