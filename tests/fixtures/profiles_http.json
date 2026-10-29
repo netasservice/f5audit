@@ -1,0 +1,31 @@
+[
+  {
+    "kind": "tm:ltm:profile:http:httpstate",
+    "name": "http",
+    "partition": "Common",
+    "fullPath": "/Common/http",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/http/~Common~http?ver=17.5.1",
+    "insertXforwardedFor": "disabled",
+    "xffAlternativeNames": "none",
+    "enforcement": {
+      "maxHeaderSize": 32768,
+      "unknownMethod": "allow"
+    }
+  },
+  {
+    "kind": "tm:ltm:profile:http:httpstate",
+    "name": "http-custom",
+    "partition": "Common",
+    "fullPath": "/Common/http-custom",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/http/~Common~http-custom?ver=17.5.1",
+    "defaultsFrom": "/Common/http",
+    "insertXforwardedFor": "enabled",
+    "xffAlternativeNames": "none",
+    "enforcement": {
+      "maxHeaderSize": 65536,
+      "unknownMethod": "allow"
+    }
+  }
+]

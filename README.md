@@ -104,6 +104,17 @@ cache collected before `default-node-monitor` existed leaves unused
 monitors at `UNRELIABLE (incomplete inventory)` until it is backfilled the
 same way.
 
+LTM profiles are read the same way (`/mgmt/tm/ltm/profile/<type>` per type
+and partition, for the curated type list `http, tcp, udp, fastl4,
+client-ssl, server-ssl, one-connect, http-compression, web-acceleration,
+http2, stream, dns, ftp, websocket`; an unprovisioned type is skipped),
+plus `/mgmt/tm/gtm/listener` and each listener's `/profiles` (DNS listeners
+carry their own dns/udp/tcp profiles; a 404 means the DNS module is not
+provisioned). A profile counts as used by the virtual servers and GTM
+listeners it is attached to, by https monitors naming it as `ssl-profile`,
+and by the profiles inheriting from it. A cache collected before these
+existed has no Profile Findings; resume `collect --save-raw` to backfill.
+
 ### One-step alternative
 
 ```
@@ -170,12 +181,12 @@ with warnings (standby device, denied partitions, missing endpoints).
 
 | Verdict | Meaning |
 |---|---|
-| `ORPHAN` | Not referenced by anything (node: no pool membership; pool: no VS/iRule/policy reference; monitor: no node, pool, pool member or inheriting monitor (`defaults-from`) uses it, and it is not the default node monitor). Only issued when the inventory is complete and no attached dynamic iRule can reach the object (see `MANUAL REVIEW`). |
-| `MANUAL REVIEW` | A dynamic iRule (`pool $var`, `pool [...]` — including datagroup lookups whose value reaches the `pool` command; a `class match` used only as a condition before `pool <literal>` is a static reference) or a missing `ltm/rule` endpoint means the object *could* be referenced at runtime. Never auto-cleanup these. A dynamic iRule attached to a virtual server reaches the pools of its own partition, the VS's partition, `/Common`, and any partition named literally (`/Partition/...`) in its Tcl; pools in other partitions are not affected, and nodes inherit the reach of their pools. Objects owned by an **iApp** are also capped here: a node, pool or virtual server that would otherwise be `ORPHAN`, `OFFLINE` or `INACTIVE` becomes `MANUAL REVIEW`, with the iApp name and the original evidence in the notes. Ownership is read from the `appService` attribute BIG-IP sets on iApp objects (for nodes, also through their pool membership), with the `<name>.app` folder as a fallback. With strict updates tmsh refuses to modify these objects, and without it the next iApp reconfigure recreates them, so removal has to go through the iApp. Finally, a monitor-dead pool that still has a member node with verdict `IN USE` is held here instead of `OFFLINE`, and so is a dead virtual server reaching such a pool; a dead virtual server with any iRule or policy attached, and a dead pool that is the default pool of a virtual server carrying iRules or policies, are held here as well; so is a dead pool that a static iRule names or a policy forwards to (see `OFFLINE`). A custom monitor whose only users are `ORPHAN` objects (a pool, a node, or a monitor inheriting from it) is held here: it becomes deletable once they are removed. |
+| `ORPHAN` | Not referenced by anything (node: no pool membership; pool: no VS/iRule/policy reference; monitor: no node, pool, pool member or inheriting monitor (`defaults-from`) uses it, and it is not the default node monitor; profile: no virtual server, GTM listener, monitor or inheriting profile uses it). Only issued when the inventory is complete and no attached dynamic iRule can reach the object (see `MANUAL REVIEW`). |
+| `MANUAL REVIEW` | A dynamic iRule (`pool $var`, `pool [...]` — including datagroup lookups whose value reaches the `pool` command; a `class match` used only as a condition before `pool <literal>` is a static reference) or a missing `ltm/rule` endpoint means the object *could* be referenced at runtime. Never auto-cleanup these. A dynamic iRule attached to a virtual server reaches the pools of its own partition, the VS's partition, `/Common`, and any partition named literally (`/Partition/...`) in its Tcl; pools in other partitions are not affected, and nodes inherit the reach of their pools. Objects owned by an **iApp** are also capped here: a node, pool or virtual server that would otherwise be `ORPHAN`, `OFFLINE` or `INACTIVE` becomes `MANUAL REVIEW`, with the iApp name and the original evidence in the notes. Ownership is read from the `appService` attribute BIG-IP sets on iApp objects (for nodes, also through their pool membership), with the `<name>.app` folder as a fallback. With strict updates tmsh refuses to modify these objects, and without it the next iApp reconfigure recreates them, so removal has to go through the iApp. Finally, a monitor-dead pool that still has a member node with verdict `IN USE` is held here instead of `OFFLINE`, and so is a dead virtual server reaching such a pool; a dead virtual server with any iRule or policy attached, and a dead pool that is the default pool of a virtual server carrying iRules or policies, are held here as well; so is a dead pool that a static iRule names or a policy forwards to (see `OFFLINE`). A custom monitor or profile whose only users are `ORPHAN` objects (a pool, a node, a virtual server, or an object inheriting from it) is held here: it becomes deletable once they are removed. A removal-candidate profile is also held here when an iRule names it, when it is a client-ssl/server-ssl profile and any iRule switches SSL profiles at runtime (`SSL::profile $var` / `SSL::profile [...]`), when `ltm/rule` was not readable, or when it is a root profile (no `defaults-from`) in `/Common` outside the known built-in list — possibly system-supplied, which tmsh refuses to delete. |
 | `INACTIVE` | Configured and referenced, but disabled or zero total connections since the last counter reset. |
-| `OFFLINE (decommission candidate)` | Referenced, but the whole dependency chain is dead: the pool has **no members** (a configuration fact — it can load-balance to nothing), or every member of the pool is monitor-down, so the pool and its virtual servers are offline. A virtual server is included only when **every** pool it can reach (default pool, iRule and policy targets) is dead; BIG-IP reports a virtual server whose pools are all empty as `unknown`, so for those the empty pools alone are the evidence. A pool counts as empty only when its members subcollection was actually collected — a denied or missing `/members` response is unknown, never empty. A deletion candidate to confirm with the config owner — monitor availability is point-in-time, so it may also mean maintenance. A node is only included when it is dead in **every** pool it belongs to; a node alive in another pool stays `IN USE` ("in use elsewhere"). Only issued on the ACTIVE unit. A pool is capped at `MANUAL REVIEW` when an attached dynamic iRule can reach it (deleting the pool could break that iRule at runtime); its dead member nodes are not — dynamic iRules select pools, never nodes, and do not change pool membership. A monitor-dead pool is also held at `MANUAL REVIEW` when any of its member nodes has verdict `IN USE` — the node is also a member of a live pool, or it answers its node-level monitor while the service on the member port is down: the server is alive, so this looks like maintenance or a stopped service rather than a decommission. A dead virtual server reaching such a pool is held too, and the notes name the pool and the node. Node verdicts are unaffected, so a dead node can be `OFFLINE` inside a held pool; an empty pool has no nodes, so this particular hold never applies to it. Attached logic holds a chain too: a dead virtual server with **any iRule or policy attached** is `MANUAL REVIEW`, because that logic can answer traffic without a pool (a redirect, a direct response, a maintenance page), so dead or empty pools do not prove the virtual server unused. A dead pool — empty ones included — that is the default pool of a virtual server carrying iRules or policies is `MANUAL REVIEW` whatever that virtual server's verdict (dead, in use through another pool, or with an unreadable iRule): deleting it means `modify ltm virtual <vs> pool none` on a virtual server whose logic may rely on its default pool. Likewise, a dead pool that a static iRule names literally or an LTM policy forwards to is `MANUAL REVIEW`: tmsh refuses `delete ltm pool` until that Tcl or policy is edited by hand, usually on a virtual server that is in use, and the notes name the references to edit. An `OFFLINE` pool is therefore always one whose only references are default-pool attachments the report can detach. A custom **monitor** is `OFFLINE` when every object using it (pool, pool member, node, inheriting monitor) is itself an `OFFLINE` candidate — for a pool, with every virtual server reaching it — so removing those objects leaves it unused; a single live user (anything `IN USE`, `MANUAL REVIEW`, `INACTIVE` or `UNRELIABLE`) keeps it `IN USE`, and the verdict needs the same complete evidence as `ORPHAN`. tmsh refuses `delete ltm monitor` while anything references it, so the notes say to delete those objects first or detach the monitor (`modify ltm pool <pool> monitor none`); no detach command is generated. |
+| `OFFLINE (decommission candidate)` | Referenced, but the whole dependency chain is dead: the pool has **no members** (a configuration fact — it can load-balance to nothing), or every member of the pool is monitor-down, so the pool and its virtual servers are offline. A virtual server is included only when **every** pool it can reach (default pool, iRule and policy targets) is dead; BIG-IP reports a virtual server whose pools are all empty as `unknown`, so for those the empty pools alone are the evidence. A pool counts as empty only when its members subcollection was actually collected — a denied or missing `/members` response is unknown, never empty. A deletion candidate to confirm with the config owner — monitor availability is point-in-time, so it may also mean maintenance. A node is only included when it is dead in **every** pool it belongs to; a node alive in another pool stays `IN USE` ("in use elsewhere"). Only issued on the ACTIVE unit. A pool is capped at `MANUAL REVIEW` when an attached dynamic iRule can reach it (deleting the pool could break that iRule at runtime); its dead member nodes are not — dynamic iRules select pools, never nodes, and do not change pool membership. A monitor-dead pool is also held at `MANUAL REVIEW` when any of its member nodes has verdict `IN USE` — the node is also a member of a live pool, or it answers its node-level monitor while the service on the member port is down: the server is alive, so this looks like maintenance or a stopped service rather than a decommission. A dead virtual server reaching such a pool is held too, and the notes name the pool and the node. Node verdicts are unaffected, so a dead node can be `OFFLINE` inside a held pool; an empty pool has no nodes, so this particular hold never applies to it. Attached logic holds a chain too: a dead virtual server with **any iRule or policy attached** is `MANUAL REVIEW`, because that logic can answer traffic without a pool (a redirect, a direct response, a maintenance page), so dead or empty pools do not prove the virtual server unused. A dead pool — empty ones included — that is the default pool of a virtual server carrying iRules or policies is `MANUAL REVIEW` whatever that virtual server's verdict (dead, in use through another pool, or with an unreadable iRule): deleting it means `modify ltm virtual <vs> pool none` on a virtual server whose logic may rely on its default pool. Likewise, a dead pool that a static iRule names literally or an LTM policy forwards to is `MANUAL REVIEW`: tmsh refuses `delete ltm pool` until that Tcl or policy is edited by hand, usually on a virtual server that is in use, and the notes name the references to edit. An `OFFLINE` pool is therefore always one whose only references are default-pool attachments the report can detach. A custom **monitor** is `OFFLINE` when every object using it (pool, pool member, node, inheriting monitor) is itself an `OFFLINE` candidate — for a pool, with every virtual server reaching it — so removing those objects leaves it unused; a single live user (anything `IN USE`, `MANUAL REVIEW`, `INACTIVE` or `UNRELIABLE`) keeps it `IN USE`, and the verdict needs the same complete evidence as `ORPHAN`. tmsh refuses `delete ltm monitor` while anything references it, so the notes say to delete those objects first or detach the monitor (`modify ltm pool <pool> monitor none`); no detach command is generated. A custom **profile** follows the same rule with virtual servers as users (`modify ltm virtual <vs> profiles delete { <profile> }`). |
 | `UNRELIABLE (standby)` | Traffic-based verdict computed on a standby unit (only with `--allow-standby`). |
-| `UNRELIABLE (incomplete inventory)` | Some partitions were not readable; a reference could exist in an invisible partition. Also issued for an unused monitor when `ltm/default-node-monitor` was not collected (an older raw cache, or a denied endpoint): every node with `monitor default` could be using it. |
+| `UNRELIABLE (incomplete inventory)` | Some partitions were not readable; a reference could exist in an invisible partition. Also issued for an unused monitor when `ltm/default-node-monitor` was not collected (an older raw cache, or a denied endpoint): every node with `monitor default` could be using it; and for an unused profile when any virtual server's `/profiles` subcollection or `gtm/listener` was not collected. |
 | `IN USE` | Everything else. |
 
 ## Operational warning
@@ -236,10 +247,17 @@ with warnings (standby device, denied partitions, missing endpoints).
    its `defaults-from` parent, who uses it (nodes, pools, pool members,
    inheriting monitors, the default node monitor) and the change and
    rollback commands described below.
-8. **Manual Review** — objects held back from a removal verdict, with
+8. **Profile Findings** — every LTM profile (of the collected types) whose
+   verdict is not `IN USE`, with its `defaults-from` parent, who uses it
+   (virtual servers, GTM listeners, monitors, inheriting profiles) and the
+   change and rollback commands described below. Empty on a cache collected
+   before profiles were read.
+9. **Manual Review** — objects held back from a removal verdict, with
    what causes the doubt: the dynamic iRule/policy, the owning iApp, the
    `IN USE` member node(s) of a dead pool, the iRules/policies attached
-   to a dead virtual server, or those referencing a dead pool.
+   to a dead virtual server, those referencing a dead pool, the removal
+   candidates that are a monitor's or profile's only users, or the iRules
+   that name a profile or switch SSL profiles at runtime.
 
 Color coding: red = ORPHAN · yellow = MANUAL REVIEW / UNRELIABLE ·
 orange = INACTIVE · purple = OFFLINE · green = IN USE.
@@ -288,6 +306,7 @@ the reverse.
 | Pool Findings | `Detach pool from virtual servers` (`modify ltm virtual <vs> pool none`, for each VS using it as default pool) · `Delete pool` · `Recreate pool (rollback)` · `Reattach pool to virtual servers (rollback)` |
 | Virtual Server Findings | `Delete virtual server` · `Recreate virtual server (rollback)` |
 | Monitor Findings | `Delete monitor` · `Create monitor (rollback)` |
+| Profile Findings | `Delete profile` · `Create profile (rollback)` |
 | Dead Chains | `Delete virtual servers` · `Delete pool` · `Delete nodes` · `Recreate nodes (rollback)` · `Recreate pool (rollback)` · `Recreate virtual servers (rollback)` |
 
 - **Pools referenced by an iRule or an LTM policy** never get commands,
@@ -316,15 +335,21 @@ the reverse.
   with default settings, so the notes ask to record any non-default
   virtual-address setting first.
 
-The monitor rollback is `create ltm monitor <type> <name> defaults-from
-<parent> ...` followed by only the properties whose value differs from the
-parent's (REST reports every property with its effective, inherited value,
+The monitor and profile rollbacks are `create ltm monitor|profile <type>
+<name> defaults-from <parent> ...` followed by only the properties whose
+value differs from the parent's (REST reports every property with its effective, inherited value,
 so this reproduces the effective configuration rather than the exact set
 of local overrides). `send`/`recv` strings are quoted as REST reports
 them. Passwords are masked by REST and left out, and the notes say so; the
 same goes for an `external` monitor's user-defined variables. When the
 parent lives in a partition that was not readable, the rollback lists
 every property and the notes say so.
+
+Known limit of the profile audit: the built-in profile list is maintained by
+hand from `profile_base.conf` (TMOS 17.x). A system-supplied *child*
+profile a newer release adds would be reported as `ORPHAN` (tmsh refuses
+the delete, so nothing is lost, but it is a false candidate); root profiles
+are covered by the `MANUAL REVIEW` cap above.
 
 ### Network context columns (Inventory, Node Findings)
 

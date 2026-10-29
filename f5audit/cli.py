@@ -359,6 +359,7 @@ VALIDATE_PROBES = [
     ("ltm/rule", "/mgmt/tm/ltm/rule", {"$top": 1}),
     ("ltm/monitor/http", "/mgmt/tm/ltm/monitor/http", {"$top": 1}),
     ("ltm/default-node-monitor", "/mgmt/tm/ltm/default-node-monitor", None),
+    ("ltm/profile/http", "/mgmt/tm/ltm/profile/http", {"$top": 1}),
     ("ltm/virtual/stats", "/mgmt/tm/ltm/virtual/stats", None),
     ("sys/failover", "/mgmt/tm/sys/failover", None),
     ("net/self", "/mgmt/tm/net/self", {"$top": 1}),
@@ -376,6 +377,8 @@ def _diagnose(endpoint: str, status: object) -> str:
             return "Forbidden: pool orphan verdicts will be capped at MANUAL REVIEW"
         if endpoint.startswith("ltm/monitor") or endpoint == "ltm/default-node-monitor":
             return "Forbidden: monitor orphan verdicts will be UNRELIABLE (incomplete inventory)"
+        if endpoint.startswith("ltm/profile"):
+            return "Forbidden: profiles will not be audited"
         return "Forbidden: this account cannot read this endpoint"
     if status == 404:
         return "Not found: endpoint missing on this BIG-IP version"

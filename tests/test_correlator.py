@@ -3,11 +3,12 @@
 from f5audit.correlator import (
     DEFAULT_NODE_MONITOR,
     correlate,
-    describe_monitor_users,
+    describe_users,
     dynamic_reach_partitions,
     is_builtin_monitor,
+    is_builtin_profile,
 )
-from f5audit.models import IRule, Pool, PoolMember, VirtualServer
+from f5audit.models import IRule, Pool, PoolMember, Profile, VirtualServer
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
 
@@ -193,13 +194,13 @@ def test_node_with_default_monitor_without_default_node_monitor_dataset():
     )
 
 
-def test_describe_monitor_users():
+def test_describe_users():
     users = {
         ("member", "/Common/pool-web /Common/node-web-1:80"),
         ("pool", "/Common/pool-web"),
         (DEFAULT_NODE_MONITOR, ""),
     }
-    assert describe_monitor_users(users) == (
+    assert describe_users(users) == (
         "ltm default-node-monitor, member /Common/node-web-1:80 of pool /Common/pool-web, "
         "pool /Common/pool-web"
     )
@@ -210,3 +211,56 @@ def test_builtin_monitor_detection():
     assert is_builtin_monitor("/Common/gateway_icmp") is True
     assert is_builtin_monitor("/Common/mon-custom") is False
     assert is_builtin_monitor("/PartitionA/http") is False
+
+
+def test_profile_users_from_virtuals_monitors_and_parents():
+    correlation = correlate(make_parsed())
+    assert correlation.profile_users["/Common/clientssl-example"] == {
+        ("virtual", "/Common/vs-dead")
+    }
+    assert ("virtual", "/Common/vs-web") in correlation.profile_users["/Common/http"]
+    assert correlation.profile_users["/Common/serverssl-for-monitor"] == {
+        ("monitor", "/Common/mon-member-only")
+    }
+    assert ("profile", "/Common/clientssl-example") in correlation.profile_users[
+        "/Common/clientssl"
+    ]
+    assert "/Common/http-custom" not in correlation.profile_users
+
+
+def test_profile_irule_mentions_and_dynamic_ssl_profile_irules():
+    parsed = make_parsed()
+    parsed.irules["/Common/irule-ssl"] = IRule(
+        "/Common/irule-ssl", "Common", "irule-ssl", "SSL::profile /Common/clientssl-orphan"
+    )
+    parsed.irules["/Common/irule-sni"] = IRule(
+        "/Common/irule-sni",
+        "Common",
+        "irule-sni",
+        "SSL::profile $p",
+        has_dynamic_ssl_profile_selection=True,
+    )
+    # Built-in profiles are never tracked, even when an iRule names them.
+    parsed.irules["/Common/irule-http"] = IRule(
+        "/Common/irule-http", "Common", "irule-http", "SSL::profile clientssl"
+    )
+    correlation = correlate(parsed)
+    assert correlation.profile_irule_mentions == {"/Common/clientssl-orphan": {"/Common/irule-ssl"}}
+    assert correlation.dynamic_ssl_profile_irules == ["/Common/irule-sni"]
+
+
+def test_profile_users_include_gtm_listeners():
+    parsed = make_parsed()
+    parsed.gtm_listener_profiles["/Common/dns-listener"] = ["/Common/http-custom"]
+    correlation = correlate(parsed)
+    assert correlation.profile_users["/Common/http-custom"] == {
+        ("gtm-listener", "/Common/dns-listener")
+    }
+
+
+def test_builtin_profile_detection():
+    assert is_builtin_profile("/Common/clientssl") is True
+    assert is_builtin_profile("/Common/f5-tcp-progressive") is True
+    assert is_builtin_profile("/Common/clientssl-example") is False
+    assert is_builtin_profile("/PartitionA/http") is False
+    assert Profile("/Common/x", "Common", "x").type == ""

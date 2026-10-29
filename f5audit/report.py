@@ -19,8 +19,8 @@ from openpyxl.utils import get_column_letter
 
 from . import commands
 from .analyzer import AnalysisResult, ObjectVerdict, Verdict
-from .correlator import Correlation, describe_monitor_users
-from .models import Monitor, Node, Pool, PoolMember
+from .correlator import Correlation, describe_users
+from .models import Node, Pool, PoolMember
 from .parsing import ParsedData
 
 VERDICT_FILLS = {
@@ -91,6 +91,10 @@ PROFILES_MISSING_NOTE = (
 MONITOR_COMMAND_HEADERS = [
     "Delete monitor",
     "Create monitor (rollback)",
+]
+PROFILE_COMMAND_HEADERS = [
+    "Delete profile",
+    "Create profile (rollback)",
 ]
 PARENT_MISSING_NOTE = (
     "Rollback lists every property: the defaults-from parent is not in the "
@@ -227,6 +231,7 @@ def build_tables(
         "virtual_server_findings": _build_virtual_server_findings(parsed, analysis),
         "dead_chains": _build_dead_chains(parsed, correlation, analysis),
         "monitor_findings": _build_monitor_findings(parsed, correlation, analysis),
+        "profile_findings": _build_profile_findings(parsed, correlation, analysis),
         "manual_review": _build_manual_review(analysis),
     }
 
@@ -257,6 +262,10 @@ def _build_summary(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
         ["iRules", len(parsed.irules)],
         ["Policies", len(parsed.policies)],
         ["Monitors", len(parsed.monitors)],
+        [
+            "Profiles (ltm/profile)",
+            len(parsed.profiles) if parsed.profiles_collected else "not collected (old cache)",
+        ],
         ["", ""],
         ["Verdict counts", ""],
     ]
@@ -656,14 +665,22 @@ def _build_monitor_findings(
         if verdict.verdict == Verdict.IN_USE:
             continue
         monitor = parsed.monitors[path]
-        cells, note = _monitor_command_cells(parsed, monitor, verdict)
+        cells, note = _rollback_cells(
+            parsed.monitors,
+            monitor,
+            verdict,
+            commands.delete_monitor_command,
+            commands.monitor_create_command,
+        )
+        if monitor.raw_values and cells[0]:
+            note = _with_note(note, RAW_VALUES_NOTE)
         table.rows.append(
             [
                 path,
                 monitor.type,
                 monitor.partition,
                 monitor.defaults_from,
-                describe_monitor_users(correlation.monitor_users.get(path, set())),
+                describe_users(correlation.monitor_users.get(path, set())),
                 verdict.verdict,
                 _with_note(verdict.notes, note),
                 *cells,
@@ -672,25 +689,59 @@ def _build_monitor_findings(
     return table
 
 
-def _monitor_command_cells(
-    parsed: ParsedData, monitor: Monitor, verdict: ObjectVerdict
-) -> tuple[list[str], str]:
-    """(MONITOR_COMMAND_HEADERS cells, extra note)."""
+def _build_profile_findings(
+    parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
+) -> ReportTable:
+    headers = [
+        "Profile",
+        "Type",
+        "Partition",
+        "Defaults from",
+        "Used by",
+        "Verdict",
+        "Notes",
+        *PROFILE_COMMAND_HEADERS,
+    ]
+    table = ReportTable("Profile Findings", headers, verdict_columns=(5,))
+    for path, verdict in sorted(analysis.profile_verdicts.items()):
+        if verdict.verdict == Verdict.IN_USE:
+            continue
+        profile = parsed.profiles[path]
+        cells, note = _rollback_cells(
+            parsed.profiles,
+            profile,
+            verdict,
+            commands.delete_profile_command,
+            commands.profile_create_command,
+        )
+        table.rows.append(
+            [
+                path,
+                profile.type,
+                profile.partition,
+                profile.defaults_from,
+                describe_users(correlation.profile_users.get(path, set())),
+                verdict.verdict,
+                _with_note(verdict.notes, note),
+                *cells,
+            ]
+        )
+    return table
+
+
+def _rollback_cells(objects, obj, verdict: ObjectVerdict, delete_command, create_command):
+    """([delete, create (rollback)] cells, extra note) for a monitor or
+    profile: the rollback diffs the object against its defaults-from parent."""
     if not _has_commands(verdict):
         return ["", ""], ""
-    parent = parsed.monitors.get(monitor.defaults_from)
+    parent = objects.get(obj.defaults_from)
     notes = []
-    if monitor.defaults_from and parent is None:
+    if obj.defaults_from and parent is None:
         notes.append(PARENT_MISSING_NOTE)
-    secrets = commands.masked_secret_keys(monitor.attributes)
+    secrets = commands.masked_secret_keys(obj.attributes)
     if secrets:
         notes.append(SECRETS_OMITTED_NOTE.format(keys=", ".join(secrets)))
-    if monitor.raw_values:
-        notes.append(RAW_VALUES_NOTE)
-    return [
-        commands.delete_monitor_command(monitor.type, monitor.full_path),
-        commands.monitor_create_command(monitor, parent),
-    ], " ".join(notes)
+    return [delete_command(obj.type, obj.full_path), create_command(obj, parent)], " ".join(notes)
 
 
 def _build_manual_review(analysis: AnalysisResult) -> ReportTable:

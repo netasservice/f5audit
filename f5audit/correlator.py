@@ -6,7 +6,13 @@ import re
 from dataclasses import dataclass, field
 
 from .models import IRule, VirtualServer
-from .parsing import COMMENT_LINE_RE, ParsedData, parse_monitor_refs
+from .parsing import (
+    COMMENT_LINE_RE,
+    ParsedData,
+    normalize_ref,
+    parse_monitor_refs,
+    profile_mentioned,
+)
 
 # A literal '/Partition/' inside iRule Tcl: the only way an iRule can name an
 # object outside its own partition (and /Common) is by full path.
@@ -43,6 +49,82 @@ BUILTIN_MONITOR_NAMES = {
 # every node with 'monitor default' inherits them.
 DEFAULT_NODE_MONITOR = "default-node-monitor"
 
+# F5 factory profiles living in /Common (profile_base.conf, TMOS 17.x), for
+# the PROFILE_TYPES the collector reads. tmsh refuses to delete them, so
+# they are never reported; the list is exact names, versioned by hand. A
+# root profile (no defaults-from) in /Common that is not listed here is
+# capped at MANUAL REVIEW as possibly system-supplied.
+BUILTIN_PROFILE_NAMES = {
+    # http
+    "http",
+    "http-explicit",
+    "http-transparent",
+    # tcp
+    "tcp",
+    "tcp-lan-optimized",
+    "tcp-wan-optimized",
+    "tcp-mobile-optimized",
+    "tcp-legacy",
+    "mptcp-mobile-optimized",
+    "f5-tcp-progressive",
+    "f5-tcp-lan",
+    "f5-tcp-wan",
+    "f5-tcp-mobile",
+    "apm-forwarding-client-tcp",
+    "apm-forwarding-server-tcp",
+    "splitsession-default-tcp",
+    "wom-tcp-lan-optimized",
+    "wom-tcp-wan-optimized",
+    # udp
+    "udp",
+    "udp_gtm_dns",
+    "udp_decrement_ttl",
+    "udp_preserve_ttl",
+    # fastl4
+    "fastL4",
+    "full-acceleration",
+    "security-fastL4",
+    "apm-forwarding-fastL4",
+    # client-ssl
+    "clientssl",
+    "clientssl-insecure-compatible",
+    "clientssl-secure",
+    "clientssl-quic",
+    "crypto-server-default-clientssl",
+    "splitsession-default-clientssl",
+    "wom-default-clientssl",
+    # server-ssl
+    "serverssl",
+    "serverssl-insecure-compatible",
+    "apm-default-serverssl",
+    "crypto-client-default-serverssl",
+    "pcoip-default-serverssl",
+    "splitsession-default-serverssl",
+    "wom-default-serverssl",
+    "shape-api-ssl",
+    # one-connect
+    "oneconnect",
+    "oneconnect-ccs",
+    # http-compression
+    "httpcompression",
+    "wan-optimized-compression",
+    # web-acceleration
+    "webacceleration",
+    "optimized-acceleration",
+    "optimized-caching",
+    # http2, stream, dns, ftp, websocket
+    "http2",
+    "stream",
+    "dns",
+    "ftp",
+    "websocket",
+}
+
+
+def is_builtin_profile(full_path: str) -> bool:
+    partition, _, name = full_path.strip("/").partition("/")
+    return partition == "Common" and name in BUILTIN_PROFILE_NAMES
+
 
 def is_builtin_monitor(full_path: str) -> bool:
     partition, _, name = full_path.strip("/").partition("/")
@@ -59,6 +141,15 @@ class Correlation:
     # "<pool> <node>:<port>"), "monitor" (a defaults-from child) or
     # DEFAULT_NODE_MONITOR (path "").
     monitor_users: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
+    # Profile -> {(kind, path)}: kind is "virtual", "gtm-listener", "monitor"
+    # (an https monitor's ssl-profile) or "profile" (a defaults-from child).
+    profile_users: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
+    # Profile -> iRules whose Tcl names it (a literal SSL::profile switch, or
+    # any other mention): deleting it could break that iRule at runtime.
+    profile_irule_mentions: dict[str, set[str]] = field(default_factory=dict)
+    # iRules switching SSL profiles with a variable or command: any
+    # client-ssl/server-ssl profile could be selected at runtime.
+    dynamic_ssl_profile_irules: list[str] = field(default_factory=list)
     # Virtual server -> every pool it can reach statically: default pool,
     # pools referenced by attached iRules and pools forwarded by attached
     # policies. Used by the dead-chain analysis.
@@ -191,10 +282,34 @@ def correlate(parsed: ParsedData) -> Correlation:
         if monitor.defaults_from in parsed.monitors:
             _add(correlation.monitor_users, monitor.defaults_from, ("monitor", monitor.full_path))
 
+    # 7. Profile -> its users, and the iRules that could reach it.
+    for virtual in parsed.virtuals.values():
+        for profile in virtual.profiles:
+            _add(correlation.profile_users, profile.full_path, ("virtual", virtual.full_path))
+    for listener_path, profile_paths in parsed.gtm_listener_profiles.items():
+        for profile_path in profile_paths:
+            _add(correlation.profile_users, profile_path, ("gtm-listener", listener_path))
+    for monitor in parsed.monitors.values():
+        ssl_profile = normalize_ref(monitor.attributes.get("sslProfile"), monitor.partition)
+        if ssl_profile:
+            _add(correlation.profile_users, ssl_profile, ("monitor", monitor.full_path))
+    for profile in parsed.profiles.values():
+        if profile.defaults_from in parsed.profiles:
+            _add(correlation.profile_users, profile.defaults_from, ("profile", profile.full_path))
+    for irule in parsed.irules.values():
+        for profile in parsed.profiles.values():
+            if is_builtin_profile(profile.full_path):
+                continue
+            if profile_mentioned(irule.definition, profile.name, profile.full_path):
+                _add(correlation.profile_irule_mentions, profile.full_path, irule.full_path)
+    correlation.dynamic_ssl_profile_irules = sorted(
+        path for path, irule in parsed.irules.items() if irule.has_dynamic_ssl_profile_selection
+    )
+
     return correlation
 
 
-def describe_monitor_users(users: set[tuple[str, str]]) -> str:
+def describe_users(users: set[tuple[str, str]]) -> str:
     labels = []
     for kind, path in sorted(users):
         if kind == DEFAULT_NODE_MONITOR:

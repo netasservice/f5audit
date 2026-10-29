@@ -21,6 +21,7 @@ from .models import (
     Policy,
     Pool,
     PoolMember,
+    Profile,
     SystemInfo,
     VirtualProfile,
     VirtualServer,
@@ -31,6 +32,8 @@ logger = logging.getLogger("f5audit.parsing")
 # --- iRule analysis -------------------------------------------------------
 
 COMMENT_LINE_RE = re.compile(r"^\s*#")
+# SSL::profile followed by a variable or a command substitution (quoted or not).
+DYNAMIC_SSL_PROFILE_RE = re.compile(r'\bSSL::profile\s+"?[\[$]')
 # Static reference: 'pool /Common/x', 'pool x', 'pool "x"' or a folder path
 # such as 'pool /Common/folder/x'. The lookbehind avoids matching Tcl
 # namespaced commands such as 'LB::pool'.
@@ -117,6 +120,36 @@ def analyze_irule_tcl(definition: str, partition: str) -> tuple[list[str], bool]
             if ref and ref not in static_refs:
                 static_refs.append(ref)
     return static_refs, dynamic
+
+
+def analyze_irule_ssl_profile(definition: str) -> bool:
+    """True when the Tcl switches SSL profiles at runtime: 'SSL::profile'
+    with a variable or command substitution as its argument. A literal
+    name is a static reference (found by profile_mentioned) and the bare
+    '[SSL::profile]' getter selects nothing."""
+    return any(
+        DYNAMIC_SSL_PROFILE_RE.search(line)
+        for line in (definition or "").splitlines()
+        if not COMMENT_LINE_RE.match(line)
+    )
+
+
+def profile_mentioned(definition: str, profile_name: str, profile_path: str) -> bool:
+    """True when a non-comment line names the profile, by name or full
+    path, as a whole word. String literals are kept: 'SSL::profile "x"'
+    is a real reference."""
+    pattern = re.compile(
+        r"(?<![\w./-])(?:"
+        + re.escape(profile_path)
+        + "|"
+        + re.escape(profile_name)
+        + r")(?![\w.-])"
+    )
+    return any(
+        pattern.search(line)
+        for line in (definition or "").splitlines()
+        if not COMMENT_LINE_RE.match(line)
+    )
 
 
 # --- Stats flattening -----------------------------------------------------
@@ -256,6 +289,12 @@ class ParsedData:
     # Monitors a node with 'monitor default' inherits (ltm default-node-monitor).
     default_node_monitors: list[str] = field(default_factory=list)
     default_node_monitor_collected: bool = False  # False => raw cache without it
+    profiles: dict[str, Profile] = field(default_factory=dict)
+    profiles_collected: bool = False  # False => raw cache without ltm_profile_* datasets
+    # GTM/DNS listener -> profiles attached to it; collected flag False on an
+    # old cache or a denied endpoint (a 404 is stored as "no listeners").
+    gtm_listener_profiles: dict[str, list[str]] = field(default_factory=dict)
+    gtm_listeners_collected: bool = False
     network: dict[str, NodeNetworkInfo] = field(default_factory=dict)  # keyed by node address
     network_collected: bool = False  # False => raw cache without net_* datasets
 
@@ -299,6 +338,8 @@ def parse_collection(data: CollectionData) -> ParsedData:
     _parse_policies(data, parsed)
     _parse_monitors(data, parsed)
     _parse_default_node_monitor(data, parsed)
+    _parse_profiles(data, parsed)
+    _parse_gtm_listeners(data, parsed)
     _parse_network(data, parsed)
     return parsed
 
@@ -527,6 +568,7 @@ def _parse_irules(data: CollectionData, parsed: ParsedData) -> None:
             definition=definition,
             referenced_pools=referenced_pools,
             has_dynamic_pool_selection=dynamic,
+            has_dynamic_ssl_profile_selection=analyze_irule_ssl_profile(definition),
         )
 
 
@@ -614,3 +656,37 @@ def _parse_default_node_monitor(data: CollectionData, parsed: ParsedData) -> Non
     raw = data.get("ltm_default_node_monitor")
     parsed.default_node_monitor_collected = raw is not None
     parsed.default_node_monitors = parse_monitor_refs((raw or {}).get("rule"), "Common")
+
+
+def _parse_profiles(data: CollectionData, parsed: ParsedData) -> None:
+    keys = data.keys_with_prefix("ltm_profile_")
+    parsed.profiles_collected = bool(keys)
+    for key in keys:
+        profile_type, _, partition = key[len("ltm_profile_") :].partition("@")
+        for item in data.get(key) or []:
+            full_path = _full_path(item, partition)
+            parsed.profiles[full_path] = Profile(
+                full_path=full_path,
+                partition=item.get("partition", partition),
+                name=item.get("name", ""),
+                type=profile_type,
+                defaults_from=normalize_ref(item.get("defaultsFrom"), partition),
+                app_service=iapp_owner(item, full_path),
+                attributes=configurable_attributes(item),
+            )
+
+
+def _parse_gtm_listeners(data: CollectionData, parsed: ParsedData) -> None:
+    listeners = data.get("gtm_listener")
+    parsed.gtm_listeners_collected = listeners is not None
+    for item in listeners or []:
+        full_path = _full_path(item, item.get("partition", "Common"))
+        profile_items = data.get(f"gtm_listener_profiles@{full_path}")
+        if profile_items is None:
+            # Listener seen but its profiles were not: unknown, not empty.
+            parsed.gtm_listeners_collected = False
+            continue
+        parsed.gtm_listener_profiles[full_path] = [
+            _full_path(profile_item, item.get("partition", "Common"))
+            for profile_item in profile_items
+        ]

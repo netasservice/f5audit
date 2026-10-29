@@ -1,0 +1,114 @@
+[
+  {
+    "kind": "tm:ltm:profile:client-ssl:client-sslstate",
+    "name": "clientssl",
+    "partition": "Common",
+    "fullPath": "/Common/clientssl",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/client-ssl/~Common~clientssl?ver=17.5.1",
+    "ciphers": "DEFAULT",
+    "options": [
+      "dont-insert-empty-fragments",
+      "no-tlsv1.3"
+    ],
+    "renegotiation": "enabled",
+    "sniDefault": "false",
+    "sniRequire": "false",
+    "cert": "/Common/default.crt",
+    "key": "/Common/default.key",
+    "chain": "none",
+    "certKeyChain": [
+      {
+        "name": "default",
+        "cert": "/Common/default.crt",
+        "key": "/Common/default.key",
+        "chain": "none"
+      }
+    ]
+  },
+  {
+    "kind": "tm:ltm:profile:client-ssl:client-sslstate",
+    "name": "clientssl-example",
+    "partition": "Common",
+    "fullPath": "/Common/clientssl-example",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/client-ssl/~Common~clientssl-example?ver=17.5.1",
+    "defaultsFrom": "/Common/clientssl",
+    "ciphers": "DEFAULT:!SSLv3",
+    "options": [
+      "dont-insert-empty-fragments",
+      "no-tlsv1.3"
+    ],
+    "renegotiation": "enabled",
+    "sniDefault": "true",
+    "sniRequire": "false",
+    "cert": "/Common/app.example.net.crt",
+    "key": "/Common/app.example.net.key",
+    "chain": "/Common/ca-bundle.crt",
+    "certKeyChain": [
+      {
+        "name": "app",
+        "cert": "/Common/app.example.net.crt",
+        "key": "/Common/app.example.net.key",
+        "chain": "/Common/ca-bundle.crt",
+        "passphrase": "$M$4x$masked"
+      }
+    ],
+    "serverName": "app.example.net"
+  },
+  {
+    "kind": "tm:ltm:profile:client-ssl:client-sslstate",
+    "name": "clientssl-orphan",
+    "partition": "Common",
+    "fullPath": "/Common/clientssl-orphan",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/client-ssl/~Common~clientssl-orphan?ver=17.5.1",
+    "defaultsFrom": "/Common/clientssl",
+    "ciphers": "DEFAULT:!RC4",
+    "options": [
+      "dont-insert-empty-fragments",
+      "no-tlsv1.3"
+    ],
+    "renegotiation": "enabled",
+    "sniDefault": "false",
+    "sniRequire": "false",
+    "cert": "/Common/default.crt",
+    "key": "/Common/default.key",
+    "chain": "none",
+    "certKeyChain": [
+      {
+        "name": "default",
+        "cert": "/Common/default.crt",
+        "key": "/Common/default.key",
+        "chain": "none"
+      }
+    ]
+  },
+  {
+    "kind": "tm:ltm:profile:client-ssl:client-sslstate",
+    "name": "clientssl-custom-root",
+    "partition": "Common",
+    "fullPath": "/Common/clientssl-custom-root",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/client-ssl/~Common~clientssl-custom-root?ver=17.5.1",
+    "ciphers": "DEFAULT",
+    "options": [
+      "dont-insert-empty-fragments",
+      "no-tlsv1.3"
+    ],
+    "renegotiation": "enabled",
+    "sniDefault": "false",
+    "sniRequire": "false",
+    "cert": "/Common/default.crt",
+    "key": "/Common/default.key",
+    "chain": "none",
+    "certKeyChain": [
+      {
+        "name": "default",
+        "cert": "/Common/default.crt",
+        "key": "/Common/default.key",
+        "chain": "none"
+      }
+    ]
+  }
+]

@@ -41,6 +41,7 @@ def test_expected_sheets_exist():
         "virtual_server_findings",
         "dead_chains",
         "monitor_findings",
+        "profile_findings",
         "manual_review",
     ]
 
@@ -291,8 +292,11 @@ def test_dead_chains_includes_empty_pool_chain():
     assert row["Delete virtual servers"] == "delete ltm virtual /Common/vs-idle"
     assert row["Delete pool"] == "delete ltm pool /Common/pool-idle"
     assert row["Recreate pool (rollback)"] == "create ltm pool /Common/pool-idle"
-    # vs-idle has no collected profiles in the fixtures: no VS rollback.
-    assert row["Recreate virtual servers (rollback)"] == ""
+    assert row["Recreate virtual servers (rollback)"] == (
+        "create ltm virtual /Common/vs-idle destination /Common/192.0.2.11:80 "
+        "pool /Common/pool-idle profiles add { /Common/tcp { context all } "
+        "/Common/http { context all } }"
+    )
 
 
 def test_inventory_shows_node_and_pool_verdicts_separately():
@@ -535,7 +539,7 @@ def test_write_xlsx(tmp_path):
 def test_write_csv(tmp_path):
     _, tables = make_tables()
     written = write_csv(tables, str(tmp_path))
-    assert len(written) == 8
+    assert len(written) == 9
 
     with open(tmp_path / "inventory.csv", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))
@@ -617,3 +621,44 @@ def test_monitor_findings_commands_for_offline_monitor():
         "create ltm monitor https /Common/mon-dead-only defaults-from /Common/https "
         'interval 10 recv "alive" timeout 31'
     )
+
+
+def test_profile_findings_rows_and_commands():
+    parsed, tables = make_tables()
+    names = [row[0] for row in tables["profile_findings"].rows]
+    assert names == [
+        "/Common/clientssl-custom-root",
+        "/Common/clientssl-example",
+        "/Common/clientssl-orphan",
+        "/Common/http-custom",
+    ]
+    offline = table_row(tables, "profile_findings", "/Common/clientssl-example")
+    assert offline["Verdict"] == Verdict.OFFLINE_CANDIDATE
+    assert offline["Used by"] == "virtual /Common/vs-dead"
+    assert offline["Delete profile"] == "delete ltm profile client-ssl /Common/clientssl-example"
+    assert offline["Create profile (rollback)"] == (
+        "create ltm profile client-ssl /Common/clientssl-example defaults-from /Common/clientssl "
+        "cert-key-chain { app { cert /Common/app.example.net.crt chain /Common/ca-bundle.crt "
+        'key /Common/app.example.net.key } } ciphers "DEFAULT:!SSLv3" '
+        'server-name "app.example.net" sni-default true'
+    )
+    assert "Rollback omits passphrase" in offline["Notes"]
+    orphan = table_row(tables, "profile_findings", "/Common/http-custom")
+    assert orphan["Verdict"] == Verdict.ORPHAN
+    assert orphan["Create profile (rollback)"] == (
+        "create ltm profile http /Common/http-custom defaults-from /Common/http "
+        "enforcement { max-header-size 65536 unknown-method allow } insert-xforwarded-for enabled"
+    )
+    root = table_row(tables, "profile_findings", "/Common/clientssl-custom-root")
+    assert root["Verdict"] == Verdict.MANUAL_REVIEW
+    assert root["Delete profile"] == ""
+    summary = dict((row[0], row[1]) for row in tables["summary"].rows if row[0])
+    assert summary["Profiles (ltm/profile)"] == len(parsed.profiles)
+
+
+def test_profile_findings_on_an_old_cache_without_profiles():
+    parsed = parse_collection(build_collection(profiles=False))
+    tables = analyze(parsed)
+    assert tables["profile_findings"].rows == []
+    summary = dict((row[0], row[1]) for row in tables["summary"].rows if row[0])
+    assert summary["Profiles (ltm/profile)"] == "not collected (old cache)"

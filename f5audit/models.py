@@ -119,6 +119,9 @@ class IRule:
     definition: str = ""  # raw Tcl (apiAnonymous)
     referenced_pools: list[str] = field(default_factory=list)  # static refs, normalized
     has_dynamic_pool_selection: bool = False
+    # 'SSL::profile $var' / 'SSL::profile [cmd]': switches among the SSL
+    # profiles already attached to the virtual server at runtime.
+    has_dynamic_ssl_profile_selection: bool = False
 
 
 @dataclass
@@ -143,6 +146,17 @@ class Monitor:
     # against the parent's.
     attributes: dict[str, Any] = field(default_factory=dict)
     raw_values: dict[str, Any] = field(default_factory=dict)  # apiRawValues (external monitors)
+
+
+@dataclass
+class Profile:
+    full_path: str
+    partition: str
+    name: str
+    type: str = ""  # tmsh profile type (http, client-ssl, ...)
+    defaults_from: str = ""  # normalized parent path, "" for a root (built-in) profile
+    app_service: str = ""  # owning iApp, empty if none
+    attributes: dict[str, Any] = field(default_factory=dict)  # see Monitor.attributes
 
 
 @dataclass
