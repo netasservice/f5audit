@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "tm:ltm:profile:tcp:tcpstate",
+    "name": "tcp",
+    "partition": "Common",
+    "fullPath": "/Common/tcp",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/tcp/~Common~tcp?ver=17.5.1",
+    "idleTimeout": 300,
+    "nagle": "auto"
+  }
+]

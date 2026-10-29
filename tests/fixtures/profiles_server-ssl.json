@@ -1,0 +1,23 @@
+[
+  {
+    "kind": "tm:ltm:profile:server-ssl:server-sslstate",
+    "name": "serverssl",
+    "partition": "Common",
+    "fullPath": "/Common/serverssl",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/server-ssl/~Common~serverssl?ver=17.5.1",
+    "ciphers": "DEFAULT",
+    "peerCertMode": "ignore"
+  },
+  {
+    "kind": "tm:ltm:profile:server-ssl:server-sslstate",
+    "name": "serverssl-for-monitor",
+    "partition": "Common",
+    "fullPath": "/Common/serverssl-for-monitor",
+    "generation": 1,
+    "selfLink": "https://localhost/mgmt/tm/ltm/profile/server-ssl/~Common~serverssl-for-monitor?ver=17.5.1",
+    "defaultsFrom": "/Common/serverssl",
+    "ciphers": "DEFAULT",
+    "peerCertMode": "require"
+  }
+]

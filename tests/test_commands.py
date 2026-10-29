@@ -1,7 +1,15 @@
 """tmsh command text builders: syntax per the official tmsh reference."""
 
 from f5audit import commands
-from f5audit.models import Monitor, Node, Pool, PoolMember, VirtualProfile, VirtualServer
+from f5audit.models import (
+    Monitor,
+    Node,
+    Pool,
+    PoolMember,
+    Profile,
+    VirtualProfile,
+    VirtualServer,
+)
 
 
 def member(node_path, port, **kwargs):
@@ -207,4 +215,54 @@ def test_attribute_diff_renders_nested_values_and_omits_masked_secrets():
 def test_delete_monitor_command():
     assert commands.delete_monitor_command("https", "/Common/m") == (
         "delete ltm monitor https /Common/m"
+    )
+
+
+def test_profile_create_command_skips_mirrored_ssl_keys_and_secrets():
+    parent = Profile(
+        "/Common/clientssl",
+        "Common",
+        "clientssl",
+        "client-ssl",
+        "",
+        "",
+        {
+            "ciphers": "DEFAULT",
+            "cert": "/Common/default.crt",
+            "key": "/Common/default.key",
+            "certKeyChain": [
+                {"name": "default", "cert": "/Common/default.crt", "key": "/Common/default.key"}
+            ],
+        },
+    )
+    profile = Profile(
+        "/Common/app-ssl",
+        "Common",
+        "app-ssl",
+        "client-ssl",
+        "/Common/clientssl",
+        "",
+        {
+            "ciphers": "DEFAULT",
+            "cert": "/Common/app.crt",
+            "key": "/Common/app.key",
+            "certKeyChain": [
+                {
+                    "name": "app",
+                    "cert": "/Common/app.crt",
+                    "key": "/Common/app.key",
+                    "passphrase": "$M$x",
+                }
+            ],
+            "data0rtt": "disabled",
+            "sniDefault": "true",
+        },
+    )
+    assert commands.profile_create_command(profile, parent) == (
+        "create ltm profile client-ssl /Common/app-ssl defaults-from /Common/clientssl "
+        "cert-key-chain { app { cert /Common/app.crt key /Common/app.key } } "
+        "data-0rtt disabled sni-default true"
+    )
+    assert commands.delete_profile_command("client-ssl", "/Common/app-ssl") == (
+        "delete ltm profile client-ssl /Common/app-ssl"
     )

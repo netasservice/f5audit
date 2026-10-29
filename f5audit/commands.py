@@ -20,7 +20,9 @@ tmsh-reference: ltm node, ltm pool, ltm virtual, ltm virtual-address):
 - Safe order: virtual servers -> pool -> nodes; rollback is the reverse.
 - `delete ltm monitor` is refused while a node, pool, pool member or
   inheriting monitor references the monitor, and default (F5-supplied)
-  monitors cannot be deleted at all.
+  monitors cannot be deleted at all. The same holds for `delete ltm
+  profile <type>` while a virtual server (or GTM listener, monitor or
+  inheriting profile) references the profile.
 - `create ltm monitor <type> <name> defaults-from <parent> ...` takes the
   same property names iControl REST reports, in kebab-case instead of
   camelCase (`timeUntilUp` -> `time-until-up`). REST reports every
@@ -42,7 +44,7 @@ import ipaddress
 import re
 from typing import Any
 
-from .models import Monitor, Node, Pool, PoolMember, VirtualServer
+from .models import Monitor, Node, Pool, PoolMember, Profile, VirtualServer
 
 ANY_SOURCE = {"", "0.0.0.0/0", "::/0"}
 
@@ -64,6 +66,9 @@ ALWAYS_QUOTED_KEYS = {
 }
 _NEEDS_QUOTES_RE = re.compile(r'[\s"{};#\\$\[\]]')
 MASKED_VALUE_PREFIX = "$M$"  # how REST reports a password/passphrase
+# SSL profiles report cert/key/chain twice: as top-level properties and
+# inside cert-key-chain; the latter is the configuration.
+SSL_MIRROR_KEYS = {"cert", "key", "chain"}
 
 
 def _quote(text: str) -> str:
@@ -170,6 +175,21 @@ def _create_with_defaults(
 
 def delete_monitor_command(monitor_type: str, monitor_path: str) -> str:
     return f"delete ltm monitor {monitor_type} {monitor_path}"
+
+
+def delete_profile_command(profile_type: str, profile_path: str) -> str:
+    return f"delete ltm profile {profile_type} {profile_path}"
+
+
+def profile_create_command(profile: Profile, parent: Profile | None) -> str:
+    """Re-create a profile the same way as a monitor (parent + differences)."""
+    attributes = profile.attributes
+    if "certKeyChain" in attributes:
+        attributes = {k: v for k, v in attributes.items() if k not in SSL_MIRROR_KEYS}
+    properties, _ = attribute_diff(attributes, parent.attributes if parent is not None else None)
+    return _create_with_defaults(
+        f"ltm profile {profile.type}", profile.full_path, profile.defaults_from, properties
+    )
 
 
 def monitor_create_command(monitor: Monitor, parent: Monitor | None) -> str:

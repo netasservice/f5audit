@@ -57,6 +57,7 @@ def minimal_responses():
         "/mgmt/tm/ltm/monitor/http": load_fixture("monitors_http.json"),
         "/mgmt/tm/ltm/monitor/https": load_fixture("monitors_https.json"),
         "/mgmt/tm/ltm/default-node-monitor": load_fixture("default_node_monitor.json"),
+        "/mgmt/tm/ltm/profile/http": load_fixture("profiles_http.json"),
         "/mgmt/tm/ltm/virtual/stats": {},
         "/mgmt/tm/ltm/pool/stats": {},
         "/mgmt/tm/ltm/node/stats": {},
@@ -79,6 +80,13 @@ def test_collect_gathers_expected_datasets():
     assert "/mgmt/tm/ltm/monitor/mysql" not in data.meta["missing_endpoints"]
     assert data.get("ltm_monitor_http@Common")
     assert data.get("ltm_default_node_monitor")["rule"] == "/Common/icmp "
+    # Profiles: one GET per type and partition, unprovisioned types skipped.
+    assert data.get("ltm_profile_http@Common")
+    assert "ltm_profile_client-ssl@Common" not in data.datasets
+    assert "/mgmt/tm/ltm/profile/client-ssl" not in data.meta["missing_endpoints"]
+    # No DNS module (404 on gtm/listener) means no listeners, stored as such.
+    assert data.get("gtm_listener") == []
+    assert "/mgmt/tm/gtm/listener" not in data.meta["missing_endpoints"]
 
 
 def test_collect_gathers_network_datasets():
@@ -261,3 +269,26 @@ def test_collect_tolerates_missing_virtual_profiles():
     assert data.meta["aborted"] is None
     assert "ltm_virtual_profiles@/Common/vs-dead" not in data.datasets
     assert not any("profiles" in endpoint for endpoint in data.meta["missing_endpoints"])
+
+
+def test_collect_fetches_gtm_listener_profiles_per_listener():
+    responses = minimal_responses()
+    responses["/mgmt/tm/gtm/listener"] = [
+        {"name": "dns-listener", "partition": "Common", "fullPath": "/Common/dns-listener"}
+    ]
+    responses["/mgmt/tm/gtm/listener/~Common~dns-listener/profiles"] = [
+        {"name": "dns", "partition": "Common", "fullPath": "/Common/dns"}
+    ]
+    client = FakeClient(responses)
+    data = Collector(client).collect()
+    assert len(data.get("gtm_listener")) == 1
+    assert data.get("gtm_listener_profiles@/Common/dns-listener")[0]["fullPath"] == "/Common/dns"
+    assert "/mgmt/tm/gtm/listener/~Common~dns-listener/profiles" in client.requested
+
+
+def test_denied_gtm_listener_is_not_mistaken_for_no_listeners():
+    responses = minimal_responses()
+    responses["/mgmt/tm/gtm/listener"] = F5APIError(403, "/mgmt/tm/gtm/listener")
+    data = Collector(FakeClient(responses)).collect()
+    assert "gtm_listener" not in data.datasets
+    assert "/mgmt/tm/gtm/listener" in data.meta["denied"][0]["endpoint"]

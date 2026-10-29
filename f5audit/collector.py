@@ -37,6 +37,25 @@ MONITOR_TYPES = [
     "sip",
 ]
 
+# LTM profile types audited for orphans. REST paths and tmsh component names
+# coincide ('one-connect' is the type; 'oneconnect' is the built-in profile).
+PROFILE_TYPES = [
+    "http",
+    "tcp",
+    "udp",
+    "fastl4",
+    "client-ssl",
+    "server-ssl",
+    "one-connect",
+    "http-compression",
+    "web-acceleration",
+    "http2",
+    "stream",
+    "dns",
+    "ftp",
+    "websocket",
+]
+
 META_KEY = "_meta"
 
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._@~-]")
@@ -203,6 +222,8 @@ class Collector:
             self._collect_policy_rules()
             self._collect_monitors(partitions)
             self._collect_default_node_monitor()
+            self._collect_profiles(partitions)
+            self._collect_gtm_listeners()
             self._collect_stats()
             self._collect_network()
         except F5ClientError as exc:
@@ -306,21 +327,57 @@ class Collector:
 
     def _collect_monitors(self, partitions: list[str]) -> None:
         logger.info("Collecting monitors...")
-        for monitor_type in MONITOR_TYPES:
+        self._collect_typed("ltm_monitor", "/mgmt/tm/ltm/monitor", MONITOR_TYPES, partitions)
+
+    def _collect_profiles(self, partitions: list[str]) -> None:
+        logger.info("Collecting profiles...")
+        self._collect_typed("ltm_profile", "/mgmt/tm/ltm/profile", PROFILE_TYPES, partitions)
+
+    def _collect_typed(
+        self, prefix: str, api_root: str, types: list[str], partitions: list[str]
+    ) -> None:
+        """One GET per (type, partition) for typed collections such as
+        monitors and profiles; a type that 404s is not provisioned."""
+        for object_type in types:
             for partition in partitions:
                 data = self._fetch(
-                    f"ltm_monitor_{monitor_type}@{partition}",
-                    f"/mgmt/tm/ltm/monitor/{monitor_type}",
+                    f"{prefix}_{object_type}@{partition}",
+                    f"{api_root}/{object_type}",
                     params={"$filter": f"partition eq {partition}"},
                     partition=partition,
                     tolerate_404=True,
                 )
-                if data is None and self._monitor_type_missing(monitor_type):
+                if data is None and self._type_missing(prefix, object_type):
                     # Type not provisioned at all: skip remaining partitions.
                     break
 
-    def _monitor_type_missing(self, monitor_type: str) -> bool:
-        return not any(key.startswith(f"ltm_monitor_{monitor_type}@") for key in self.data.datasets)
+    def _type_missing(self, prefix: str, object_type: str) -> bool:
+        return not any(key.startswith(f"{prefix}_{object_type}@") for key in self.data.datasets)
+
+    def _collect_gtm_listeners(self) -> None:
+        """GTM/DNS listeners carry their own profiles (dns, udp, tcp), the
+        only use some custom profiles have. A 404 means the DNS module is
+        not provisioned, i.e. no listener exists: stored as an empty list so
+        the analysis can tell that apart from a denied endpoint."""
+        api_path = "/mgmt/tm/gtm/listener"
+        listeners = self._fetch("gtm_listener", api_path, tolerate_404=True)
+        if listeners is None:
+            if not self._was_denied(api_path):
+                self._store("gtm_listener", api_path, [])
+            return
+        for item in listeners:
+            full_path = (
+                item.get("fullPath") or f"/{item.get('partition', 'Common')}/{item.get('name', '')}"
+            )
+            encoded = encode_path_component(full_path)
+            self._fetch(
+                f"gtm_listener_profiles@{full_path}",
+                f"{api_path}/{encoded}/profiles",
+                tolerate_404=True,
+            )
+
+    def _was_denied(self, api_path: str) -> bool:
+        return any(entry.get("endpoint") == api_path for entry in self.data.meta["denied"])
 
     def _collect_default_node_monitor(self) -> None:
         # One document, not a collection: the monitors every node with

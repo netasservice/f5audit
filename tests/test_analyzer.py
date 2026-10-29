@@ -2,7 +2,17 @@
 
 from f5audit.analyzer import POINT_IN_TIME_NOTE, Analyzer, Verdict
 from f5audit.correlator import correlate
-from f5audit.models import IRule, Monitor, Node, Policy, Pool, PoolMember, VirtualServer
+from f5audit.models import (
+    IRule,
+    Monitor,
+    Node,
+    Policy,
+    Pool,
+    PoolMember,
+    Profile,
+    VirtualProfile,
+    VirtualServer,
+)
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
 
@@ -1033,3 +1043,176 @@ def test_standby_with_flag_outranks_attached_logic_hold():
     )
     assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.UNRELIABLE_STANDBY
     assert result.pool_verdicts["/Common/pool-dead"].verdict == Verdict.UNRELIABLE_STANDBY
+
+
+# ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_profile_never_orphan():
+    result = analyze()
+    for path in ("/Common/clientssl", "/Common/http", "/Common/tcp", "/Common/serverssl"):
+        assert result.profile_verdicts[path].verdict == Verdict.IN_USE
+
+
+def test_profile_attached_to_a_live_virtual_is_in_use():
+    def mutate(parsed):
+        parsed.virtuals["/Common/vs-web"].profiles.append(
+            VirtualProfile("/Common/clientssl-example", "clientside")
+        )
+
+    result = analyze(mutate=mutate)
+    verdict = result.profile_verdicts["/Common/clientssl-example"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "virtual /Common/vs-web" in verdict.notes
+
+
+def test_profile_used_only_by_offline_virtual_is_offline():
+    result = analyze()
+    verdict = result.profile_verdicts["/Common/clientssl-example"]
+    assert verdict.verdict == Verdict.OFFLINE_CANDIDATE
+    assert "virtual /Common/vs-dead" in verdict.notes
+    assert "profiles delete { <profile> }" in verdict.notes
+    assert verdict.notes.endswith(POINT_IN_TIME_NOTE)
+
+
+def test_profile_of_a_held_virtual_stays_in_use():
+    def mutate(parsed):
+        # vs-dead carries an iRule (no pool), so it is held at MANUAL REVIEW.
+        path = "/Common/irule-redirect"
+        parsed.irules[path] = IRule(
+            path, "Common", "irule-redirect", "when HTTP_REQUEST { HTTP::redirect https://x }"
+        )
+        parsed.virtuals["/Common/vs-dead"].irules.append(path)
+
+    result = analyze(mutate=mutate)
+    assert result.virtual_verdicts["/Common/vs-dead"].verdict == Verdict.MANUAL_REVIEW
+    assert result.profile_verdicts["/Common/clientssl-example"].verdict == Verdict.IN_USE
+
+
+def test_unused_profile_is_orphan():
+    result = analyze()
+    verdict = result.profile_verdicts["/Common/http-custom"]
+    assert verdict.verdict == Verdict.ORPHAN
+    assert result.profile_verdicts["/Common/clientssl-orphan"].verdict == Verdict.ORPHAN
+
+
+def test_profiles_unreliable_when_a_virtual_has_no_profile_data():
+    collection = build_collection()
+    del collection.datasets["ltm_virtual_profiles@/Common/vs-web"]
+    parsed = parse_collection(collection)
+    result = Analyzer(parsed, correlate(parsed)).run()
+    verdict = result.profile_verdicts["/Common/http-custom"]
+    assert verdict.verdict == Verdict.UNRELIABLE_INVENTORY
+    assert "/Common/vs-web" in verdict.notes
+    # An offline-only profile needs the same evidence.
+    assert result.profile_verdicts["/Common/clientssl-example"].verdict == (
+        Verdict.UNRELIABLE_INVENTORY
+    )
+    assert any("/Common/vs-web" in warning for warning in result.warnings)
+
+
+def test_profiles_unreliable_without_gtm_listeners():
+    collection = build_collection()
+    del collection.datasets["gtm_listener"]
+    parsed = parse_collection(collection)
+    result = Analyzer(parsed, correlate(parsed)).run()
+    verdict = result.profile_verdicts["/Common/http-custom"]
+    assert verdict.verdict == Verdict.UNRELIABLE_INVENTORY
+    assert "gtm/listener" in verdict.notes
+
+
+def test_profile_used_by_a_gtm_listener_is_in_use():
+    def mutate(parsed):
+        parsed.gtm_listener_profiles["/Common/dns-listener"] = ["/Common/http-custom"]
+
+    result = analyze(mutate=mutate)
+    verdict = result.profile_verdicts["/Common/http-custom"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "gtm-listener /Common/dns-listener" in verdict.notes
+
+
+def test_profile_used_by_a_monitor_is_in_use():
+    result = analyze()
+    verdict = result.profile_verdicts["/Common/serverssl-for-monitor"]
+    assert verdict.verdict == Verdict.IN_USE
+    assert "monitor /Common/mon-member-only" in verdict.notes
+
+
+def test_profile_parent_of_orphan_child_is_manual_review():
+    def mutate(parsed):
+        child = "/Common/http-child"
+        parsed.profiles[child] = Profile(
+            child, "Common", "http-child", "http", "/Common/http-custom"
+        )
+
+    result = analyze(mutate=mutate)
+    assert result.profile_verdicts["/Common/http-child"].verdict == Verdict.ORPHAN
+    parent = result.profile_verdicts["/Common/http-custom"]
+    assert parent.verdict == Verdict.MANUAL_REVIEW
+    assert "profile /Common/http-child" in parent.notes
+
+
+def test_profile_orphan_capped_when_irules_unreadable():
+    result = analyze(missing_endpoints=["/mgmt/tm/ltm/rule"])
+    verdict = result.profile_verdicts["/Common/http-custom"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "ltm/rule" in verdict.notes
+
+
+def test_profile_named_by_an_irule_is_manual_review():
+    def mutate(parsed):
+        path = "/Common/irule-ssl"
+        parsed.irules[path] = IRule(
+            path, "Common", "irule-ssl", "when CLIENT_ACCEPTED { SSL::profile clientssl-orphan }"
+        )
+
+    result = analyze(mutate=mutate)
+    verdict = result.profile_verdicts["/Common/clientssl-orphan"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "/Common/irule-ssl" in verdict.notes
+    assert result.profile_verdicts["/Common/http-custom"].verdict == Verdict.ORPHAN
+    assert any(
+        item.object_type == "profile" and item.full_path == "/Common/clientssl-orphan"
+        for item in result.manual_review
+    )
+
+
+def test_dynamic_ssl_profile_irule_caps_ssl_profiles_only():
+    def mutate(parsed):
+        path = "/Common/irule-sni"
+        parsed.irules[path] = IRule(
+            path, "Common", "irule-sni", "SSL::profile $p", has_dynamic_ssl_profile_selection=True
+        )
+
+    result = analyze(mutate=mutate)
+    verdict = result.profile_verdicts["/Common/clientssl-orphan"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "SSL::profile" in verdict.notes
+    assert result.profile_verdicts["/Common/clientssl-example"].verdict == Verdict.MANUAL_REVIEW
+    assert result.profile_verdicts["/Common/http-custom"].verdict == Verdict.ORPHAN
+
+
+def test_unknown_root_profile_in_common_is_manual_review():
+    result = analyze()
+    verdict = result.profile_verdicts["/Common/clientssl-custom-root"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "system-supplied" in verdict.notes
+
+
+def test_iapp_owned_profile_is_manual_review():
+    def mutate(parsed):
+        parsed.profiles["/Common/http-custom"].app_service = "/Common/app1.app/app1"
+
+    result = analyze(mutate=mutate)
+    verdict = result.profile_verdicts["/Common/http-custom"]
+    assert verdict.verdict == Verdict.MANUAL_REVIEW
+    assert "/Common/app1.app/app1" in verdict.notes
+
+
+def test_profile_verdicts_absent_on_an_old_cache():
+    parsed = parse_collection(build_collection(profiles=False))
+    result = Analyzer(parsed, correlate(parsed)).run()
+    assert result.profile_verdicts == {}
+    assert not any("rofile" in warning for warning in result.warnings)

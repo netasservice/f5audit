@@ -34,7 +34,8 @@ Cross-cutting rules (spec section 8):
   policy is edited by hand, on a virtual server that is likely in use.
 - Incomplete inventory (denied partitions/endpoints) degrades orphan
   verdicts, because a reference could live in an invisible partition.
-- Objects owned by an iApp (nodes, pools, virtual servers, monitors) are
+- Objects owned by an iApp (nodes, pools, virtual servers, monitors,
+  profiles) are
   capped at MANUAL REVIEW: with strict updates tmsh refuses to modify
   them, and without it the next iApp reconfigure recreates them, so
   removal is an iApp change, never a tmsh cleanup.
@@ -49,6 +50,15 @@ Cross-cutting rules (spec section 8):
   once they are gone. Without the default-node-monitor dataset an unused
   monitor is UNRELIABLE, since every node with 'monitor default' could be
   using it.
+- Profiles follow the same dependent rule. Their users are virtual
+  servers, GTM listeners, https monitors (ssl-profile) and inheriting
+  profiles; the evidence is complete only when every virtual server's
+  profiles and the GTM listeners were collected. An iRule can switch SSL
+  profiles at runtime (SSL::profile) or name a profile, so a removal
+  candidate mentioned by an iRule, or any client-ssl/server-ssl profile
+  while a dynamic SSL::profile iRule exists, is capped at MANUAL REVIEW,
+  as is a root profile in /Common outside the known built-in list (tmsh
+  refuses to delete system-supplied profiles).
 """
 
 from __future__ import annotations
@@ -59,8 +69,9 @@ from dataclasses import dataclass, field
 from .correlator import (
     DEFAULT_NODE_MONITOR,
     Correlation,
-    describe_monitor_users,
+    describe_users,
     is_builtin_monitor,
+    is_builtin_profile,
 )
 from .parsing import ParsedData
 
@@ -126,6 +137,7 @@ class AnalysisResult:
     pool_verdicts: dict[str, ObjectVerdict] = field(default_factory=dict)
     virtual_verdicts: dict[str, ObjectVerdict] = field(default_factory=dict)
     monitor_verdicts: dict[str, ObjectVerdict] = field(default_factory=dict)
+    profile_verdicts: dict[str, ObjectVerdict] = field(default_factory=dict)
     manual_review: list[ManualReviewItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     stats_analysis_skipped: bool = False
@@ -141,6 +153,7 @@ class AnalysisResult:
             self.pool_verdicts,
             self.virtual_verdicts,
             self.monitor_verdicts,
+            self.profile_verdicts,
         ):
             for object_verdict in verdicts.values():
                 counts[object_verdict.verdict] = counts.get(object_verdict.verdict, 0) + 1
@@ -228,6 +241,11 @@ class Analyzer:
             for ep in system.missing_endpoints
         )
         self.irules_available = not any("/ltm/rule" in ep for ep in system.missing_endpoints)
+        # A virtual server whose profiles subcollection was not collected
+        # could be using any profile.
+        self.virtuals_without_profiles = sorted(
+            path for path, virtual in parsed.virtuals.items() if not virtual.profiles_collected
+        )
         # Uptime context: traffic counters reset on reboot / stats reset.
         self.traffic_note = (
             "Traffic counters reset on reboot/stats-reset; "
@@ -248,6 +266,7 @@ class Analyzer:
         self._analyze_virtuals(result)
         self._analyze_pools(result)
         self._analyze_monitors(result)
+        self._analyze_profiles(result)
         self._analyze_irules(result)
         # Last, so the ceiling applies over every rule above.
         self._apply_iapp_cap(result)
@@ -291,6 +310,18 @@ class Analyzer:
                 "UNRELIABLE (incomplete inventory) because every node with "
                 "'monitor default' could use them. Resume collect --save-raw on "
                 "this raw directory to backfill it."
+            )
+        if self.parsed.profiles_collected and self.virtuals_without_profiles:
+            result.warnings.append(
+                "Profiles were not collected for virtual server(s) "
+                + ", ".join(self.virtuals_without_profiles)
+                + ": unused profiles are UNRELIABLE (incomplete inventory)."
+            )
+        if self.parsed.profiles_collected and not self.parsed.gtm_listeners_collected:
+            result.warnings.append(
+                "gtm/listener was not collected: unused profiles are UNRELIABLE "
+                "(incomplete inventory) because a DNS listener could use them. "
+                "Resume collect --save-raw on this raw directory to backfill it."
             )
         for endpoint in system.missing_endpoints:
             if "/ltm/rule" not in endpoint and "/ltm/default-node-monitor" not in endpoint:
@@ -680,26 +711,27 @@ class Analyzer:
                 "Not referenced by any virtual server, iRule or policy.",
             )
 
-    def _monitor_chain_depth(self, path: str) -> int:
-        """Length of the defaults-from chain below `path` inside the inventory."""
+    @staticmethod
+    def _chain_depth(objects: dict, path: str) -> int:
+        """Length of the defaults-from chain below `path` inside `objects`."""
         depth, seen = 0, set()
-        monitor = self.parsed.monitors.get(path)
+        current = objects.get(path)
         while (
-            monitor is not None
-            and monitor.defaults_from in self.parsed.monitors
-            and monitor.full_path not in seen
+            current is not None
+            and current.defaults_from in objects
+            and current.full_path not in seen
         ):
-            seen.add(monitor.full_path)
-            monitor = self.parsed.monitors[monitor.defaults_from]
+            seen.add(current.full_path)
+            current = objects[current.defaults_from]
             depth += 1
         return depth
 
-    def _monitor_user_state(self, user: tuple[str, str], result: AnalysisResult) -> str:
+    def _user_state(self, user: tuple[str, str], result: AnalysisResult) -> str:
         """'offline' when the user is an OFFLINE decommission candidate (for a
         pool or pool member: the pool and every virtual server reaching it),
         'orphan' when it is ORPHAN, otherwise 'live'. A user at MANUAL REVIEW,
-        INACTIVE or UNRELIABLE is live: a monitor is never a stronger
-        candidate than its weakest user."""
+        INACTIVE or UNRELIABLE is live: a dependent object is never a
+        stronger candidate than its weakest user."""
         kind, path = user
         if kind in ("pool", "member"):
             pool_path = path.split(" ", 1)[0]
@@ -720,7 +752,12 @@ class Analyzer:
             ):
                 return "offline"
             return "live"
-        verdicts = {"node": result.node_verdicts, "monitor": result.monitor_verdicts}.get(kind)
+        verdicts = {
+            "node": result.node_verdicts,
+            "monitor": result.monitor_verdicts,
+            "virtual": result.virtual_verdicts,
+            "profile": result.profile_verdicts,
+        }.get(kind)
         verdict = verdicts.get(path) if verdicts is not None else None
         if verdict is None:
             return "live"
@@ -728,49 +765,100 @@ class Analyzer:
             return "offline"
         return "orphan" if verdict.verdict == Verdict.ORPHAN else "live"
 
-    def _offline_monitor_verdict(
-        self, result: AnalysisResult, path: str, offline_users: set[tuple[str, str]]
+    def _dependent_verdict(
+        self,
+        result: AnalysisResult,
+        verdicts: dict[str, ObjectVerdict],
+        object_type: str,
+        path: str,
+        users: set[tuple[str, str]],
+        *,
+        evidence_gap: str,
+        detach_hint: str,
+        orphan_note: str,
     ) -> None:
-        """Every user is an OFFLINE candidate. Needs complete evidence (a hidden
-        partition or the default node monitor could still use it), then the
-        usual standby degradation."""
-        users = describe_monitor_users(offline_users)
-        if not self.inventory_complete or not self.parsed.default_node_monitor_collected:
-            gap = (
-                "some partitions were not readable"
-                if not self.inventory_complete
-                else "ltm/default-node-monitor was not collected"
+        """Verdict of an object (monitor, profile) defined by its users.
+        `evidence_gap` names what keeps the inventory from being complete
+        ("" when it is), which turns ORPHAN and OFFLINE into UNRELIABLE."""
+        states = {user: self._user_state(user, result) for user in users}
+        live_users = {user for user, state in states.items() if state == "live"}
+        offline_users = {user for user, state in states.items() if state == "offline"}
+        orphan_users = {user for user, state in states.items() if state == "orphan"}
+        if live_users:
+            verdicts[path] = ObjectVerdict(
+                Verdict.IN_USE, f"Used by: {describe_users(live_users)}."
             )
-            result.monitor_verdicts[path] = ObjectVerdict(
+        elif offline_users and not orphan_users:
+            self._offline_dependent_verdict(
+                result, verdicts, object_type, path, offline_users, evidence_gap, detach_hint
+            )
+        elif orphan_users:
+            candidates = describe_users(orphan_users | offline_users)
+            verdicts[path] = ObjectVerdict(
+                Verdict.MANUAL_REVIEW,
+                f"Only used by removal candidate(s): {candidates}; deletable once "
+                "they are removed.",
+            )
+            result.manual_review.append(
+                ManualReviewItem(object_type, path, "Only used by removal candidates", candidates)
+            )
+        elif evidence_gap:
+            verdicts[path] = ObjectVerdict(
+                Verdict.UNRELIABLE_INVENTORY,
+                f"Unused in the visible inventory, but {evidence_gap}.",
+            )
+        else:
+            verdicts[path] = ObjectVerdict(Verdict.ORPHAN, orphan_note)
+
+    def _offline_dependent_verdict(
+        self,
+        result: AnalysisResult,
+        verdicts: dict[str, ObjectVerdict],
+        object_type: str,
+        path: str,
+        offline_users: set[tuple[str, str]],
+        evidence_gap: str,
+        detach_hint: str,
+    ) -> None:
+        """Every user is an OFFLINE candidate. Needs complete evidence
+        (another user could hide behind the gap), then the usual standby
+        degradation."""
+        users = describe_users(offline_users)
+        if evidence_gap:
+            verdicts[path] = ObjectVerdict(
                 Verdict.UNRELIABLE_INVENTORY,
                 f"Every visible user is an offline decommission candidate ({users}), "
-                f"but {gap}, so another user could exist.",
+                f"but {evidence_gap}, so another user could exist.",
             )
             return
         note = (
             f"Every user is an offline decommission candidate: {users}. tmsh refuses "
-            "the delete while they reference it: delete them first, or detach it "
-            "(modify ltm pool <pool> monitor none / modify ltm node <node> monitor "
-            "default). " + POINT_IN_TIME_NOTE
+            f"the delete while they reference it: delete them first, or detach it "
+            f"({detach_hint}). " + POINT_IN_TIME_NOTE
         )
         emitted = self._offline_verdict(
-            result,
-            result.monitor_verdicts,
-            "monitor",
-            path,
-            note,
-            dynamic_irules=set(),
-            held_pools={},
+            result, verdicts, object_type, path, note, dynamic_irules=set(), held_pools={}
         )
         if not emitted:
             # Unreachable in practice (no user is OFFLINE on a standby unit
             # without --allow-standby), kept so every path sets a verdict.
-            result.monitor_verdicts[path] = ObjectVerdict(Verdict.IN_USE, f"Used by: {users}.")
+            verdicts[path] = ObjectVerdict(Verdict.IN_USE, f"Used by: {users}.")
+
+    def _monitor_evidence_gap(self) -> str:
+        if not self.inventory_complete:
+            return "some partitions were not readable"
+        if not self.parsed.default_node_monitor_collected:
+            return (
+                "ltm/default-node-monitor was not collected and every node with "
+                "'monitor default' could use it (resume collect --save-raw on this "
+                "raw directory to backfill it)"
+            )
+        return ""
 
     def _analyze_monitors(self, result: AnalysisResult) -> None:
+        monitors = self.parsed.monitors
         # Children first: a parent's verdict depends on its children's.
-        order = sorted(self.parsed.monitors, key=lambda p: (-self._monitor_chain_depth(p), p))
-        for path in order:
+        for path in sorted(monitors, key=lambda p: (-self._chain_depth(monitors, p), p)):
             if is_builtin_monitor(path):
                 result.monitor_verdicts[path] = ObjectVerdict(
                     Verdict.IN_USE, "F5 built-in monitor (excluded from orphan analysis)."
@@ -782,43 +870,91 @@ class Analyzer:
                     Verdict.IN_USE, "Configured as the ltm default-node-monitor."
                 )
                 continue
-            states = {user: self._monitor_user_state(user, result) for user in users}
-            live_users = {user for user, state in states.items() if state == "live"}
-            offline_users = {user for user, state in states.items() if state == "offline"}
-            orphan_users = {user for user, state in states.items() if state == "orphan"}
-            if live_users:
-                result.monitor_verdicts[path] = ObjectVerdict(
-                    Verdict.IN_USE, f"Used by: {describe_monitor_users(live_users)}."
+            self._dependent_verdict(
+                result,
+                result.monitor_verdicts,
+                "monitor",
+                path,
+                users,
+                evidence_gap=self._monitor_evidence_gap(),
+                detach_hint="modify ltm pool <pool> monitor none / modify ltm node <node> "
+                "monitor default",
+                orphan_note="Not used by any node, pool, pool member or monitor "
+                "(as defaults-from).",
+            )
+
+    def _profile_evidence_gap(self) -> str:
+        if not self.inventory_complete:
+            return "some partitions were not readable"
+        if self.virtuals_without_profiles:
+            return (
+                "the profiles of virtual server(s) "
+                + ", ".join(self.virtuals_without_profiles)
+                + " were not collected (resume collect --save-raw on this raw "
+                "directory to backfill them)"
+            )
+        if not self.parsed.gtm_listeners_collected:
+            return "gtm/listener was not collected and a DNS listener could use it"
+        return ""
+
+    def _analyze_profiles(self, result: AnalysisResult) -> None:
+        profiles = self.parsed.profiles
+        for path in sorted(profiles, key=lambda p: (-self._chain_depth(profiles, p), p)):
+            if is_builtin_profile(path):
+                result.profile_verdicts[path] = ObjectVerdict(
+                    Verdict.IN_USE, "F5 built-in profile (cannot be deleted)."
                 )
-            elif offline_users and not orphan_users:
-                self._offline_monitor_verdict(result, path, offline_users)
-            elif orphan_users:
-                candidates = describe_monitor_users(orphan_users | offline_users)
-                result.monitor_verdicts[path] = ObjectVerdict(
-                    Verdict.MANUAL_REVIEW,
-                    f"Only used by removal candidate(s): {candidates}; deletable once "
-                    "they are removed.",
+                continue
+            self._dependent_verdict(
+                result,
+                result.profile_verdicts,
+                "profile",
+                path,
+                self.correlation.profile_users.get(path, set()),
+                evidence_gap=self._profile_evidence_gap(),
+                detach_hint="modify ltm virtual <vs> profiles delete { <profile> }",
+                orphan_note="Not attached to any virtual server or GTM listener, not an "
+                "https monitor's ssl-profile, not the parent of any profile.",
+            )
+            self._cap_profile_for_irules(result, path, profiles[path])
+
+    def _cap_profile_for_irules(self, result: AnalysisResult, path: str, profile) -> None:
+        """Hold a removal-candidate profile at MANUAL REVIEW when iRule logic
+        could reach it, or when it may be system-supplied."""
+        current = result.profile_verdicts[path]
+        if current.verdict not in (Verdict.ORPHAN, Verdict.OFFLINE_CANDIDATE):
+            return
+        reasons = []
+        if not self.irules_available:
+            reasons.append(("ltm/rule was not readable; an iRule could select it", ""))
+        mentions = self.correlation.profile_irule_mentions.get(path, set())
+        if mentions:
+            reasons.append(("named by iRule(s)", ", ".join(sorted(mentions))))
+        dynamic = self.correlation.dynamic_ssl_profile_irules
+        if profile.type in ("client-ssl", "server-ssl") and dynamic:
+            reasons.append(
+                ("iRule(s) switch SSL profiles at runtime (SSL::profile)", ", ".join(dynamic))
+            )
+        if profile.partition == "Common" and not profile.defaults_from:
+            reasons.append(
+                (
+                    "root profile in /Common outside the known built-in list; possibly "
+                    "system-supplied, which tmsh refuses to delete",
+                    "",
                 )
-                result.manual_review.append(
-                    ManualReviewItem("monitor", path, "Only used by removal candidates", candidates)
-                )
-            elif not self.inventory_complete:
-                result.monitor_verdicts[path] = ObjectVerdict(
-                    Verdict.UNRELIABLE_INVENTORY,
-                    "Unused in visible partitions, but some partitions were not readable.",
-                )
-            elif not self.parsed.default_node_monitor_collected:
-                result.monitor_verdicts[path] = ObjectVerdict(
-                    Verdict.UNRELIABLE_INVENTORY,
-                    "Unused, but ltm/default-node-monitor was not collected and every "
-                    "node with 'monitor default' could use it. Resume collect "
-                    "--save-raw on this raw directory to backfill it.",
-                )
-            else:
-                result.monitor_verdicts[path] = ObjectVerdict(
-                    Verdict.ORPHAN,
-                    "Not used by any node, pool, pool member or monitor (as defaults-from).",
-                )
+            )
+        if not reasons:
+            return
+        texts = [
+            f"{reason} ({caused_by})" if caused_by else reason for reason, caused_by in reasons
+        ]
+        result.profile_verdicts[path] = ObjectVerdict(
+            Verdict.MANUAL_REVIEW,
+            f"Held at MANUAL REVIEW: {'; '.join(texts)}. Underlying evidence: "
+            f"{current.verdict}: {current.notes}",
+        )
+        for reason, caused_by in reasons:
+            result.manual_review.append(ManualReviewItem("profile", path, reason, caused_by))
 
     # ------------------------------------------------------------------
 
@@ -861,6 +997,10 @@ class Analyzer:
         owners += [
             ("monitor", result.monitor_verdicts, path, monitor.app_service)
             for path, monitor in self.parsed.monitors.items()
+        ]
+        owners += [
+            ("profile", result.profile_verdicts, path, profile.app_service)
+            for path, profile in self.parsed.profiles.items()
         ]
         for object_type, verdicts, path, app_service in owners:
             current = verdicts.get(path)

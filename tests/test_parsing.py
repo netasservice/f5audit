@@ -3,12 +3,14 @@
 from f5audit.parsing import (
     _parse_arp_map,
     _parse_self_networks,
+    analyze_irule_ssl_profile,
     analyze_irule_tcl,
     connectivity_note,
     iapp_owner,
     normalize_ref,
     parse_collection,
     parse_monitor_refs,
+    profile_mentioned,
     split_member_name,
 )
 from tests.conftest import build_collection, load_fixture
@@ -432,7 +434,9 @@ def test_virtual_rollback_fields_and_profiles_are_parsed():
         ("/Common/clientssl-example", "clientside"),
     ]
     # No profiles dataset (older raw cache): unknown, not "no profiles".
-    assert not parsed.virtuals["/Common/vs-web"].profiles_collected
+    collection = build_collection()
+    del collection.datasets["ltm_virtual_profiles@/Common/vs-web"]
+    assert not parse_collection(collection).virtuals["/Common/vs-web"].profiles_collected
 
 
 def test_pool_rollback_fields_are_parsed():
@@ -455,3 +459,74 @@ def test_pool_rollback_fields_are_parsed():
     assert pool.description == "web tier"
     assert pool.members[0].ratio == 3
     assert pool.members[0].connection_limit == 100
+
+
+def test_parse_profiles_and_gtm_listeners():
+    collection = build_collection()
+    collection.datasets["ltm_profile_http2@Common"] = [
+        {
+            "kind": "tm:ltm:profile:http2:http2state",
+            "name": "h2",
+            "partition": "Common",
+            "fullPath": "/Common/h2",
+            "defaultsFrom": "/Common/http2",
+            "concurrentStreamsPerConnection": 10,
+        }
+    ]
+    collection.datasets["gtm_listener"] = [
+        {"name": "dns-listener", "partition": "Common", "fullPath": "/Common/dns-listener"}
+    ]
+    collection.datasets["gtm_listener_profiles@/Common/dns-listener"] = [
+        {"name": "dns", "partition": "Common", "fullPath": "/Common/dns"},
+        {"name": "udp_gtm_dns", "partition": "Common", "fullPath": "/Common/udp_gtm_dns"},
+    ]
+    parsed = parse_collection(collection)
+    assert parsed.profiles_collected is True
+    example = parsed.profiles["/Common/clientssl-example"]
+    assert example.type == "client-ssl"
+    assert example.defaults_from == "/Common/clientssl"
+    assert example.attributes["serverName"] == "app.example.net"
+    assert "selfLink" not in example.attributes
+    assert parsed.profiles["/Common/h2"].type == "http2"
+    assert parsed.gtm_listeners_collected is True
+    assert parsed.gtm_listener_profiles == {
+        "/Common/dns-listener": ["/Common/dns", "/Common/udp_gtm_dns"]
+    }
+
+
+def test_gtm_listener_without_its_profiles_is_not_collected():
+    collection = build_collection()
+    collection.datasets["gtm_listener"] = [
+        {"name": "dns-listener", "partition": "Common", "fullPath": "/Common/dns-listener"}
+    ]
+    parsed = parse_collection(collection)
+    assert parsed.gtm_listeners_collected is False
+
+
+def test_old_cache_has_no_profiles():
+    parsed = parse_collection(build_collection(profiles=False))
+    assert parsed.profiles == {}
+    assert parsed.profiles_collected is False
+    assert parsed.gtm_listeners_collected is False
+
+
+def test_analyze_irule_ssl_profile():
+    assert analyze_irule_ssl_profile("SSL::profile $p") is True
+    assert analyze_irule_ssl_profile('SSL::profile "$p"') is True
+    assert analyze_irule_ssl_profile("SSL::profile [class match -value $h equals sni_map]") is True
+    assert analyze_irule_ssl_profile("SSL::profile /Common/clientssl-x") is False
+    assert analyze_irule_ssl_profile("set current [SSL::profile]") is False
+    assert analyze_irule_ssl_profile("# SSL::profile $p") is False
+    assert analyze_irule_ssl_profile("SSL::cipher version") is False
+
+
+def test_profile_mentioned():
+    assert profile_mentioned("SSL::profile clientssl-x", "clientssl-x", "/Common/clientssl-x")
+    assert profile_mentioned(
+        'SSL::profile "/Common/clientssl-x"', "clientssl-x", "/Common/clientssl-x"
+    )
+    assert not profile_mentioned("SSL::profile clientssl-x2", "clientssl-x", "/Common/clientssl-x")
+    assert not profile_mentioned(
+        "SSL::profile my-clientssl-x", "clientssl-x", "/Common/clientssl-x"
+    )
+    assert not profile_mentioned("# SSL::profile clientssl-x", "clientssl-x", "/Common/clientssl-x")

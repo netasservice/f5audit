@@ -92,7 +92,8 @@
     "adaptive": "disabled",
     "cipherlist": "DEFAULT:+SHA:+3DES",
     "compatibility": "enabled",
-    "defaultsFrom": "/Common/https"
+    "defaultsFrom": "/Common/https",
+    "sslProfile": "/Common/serverssl-for-monitor"
   },
   {
     "kind": "tm:ltm:monitor:https:httpsstate",

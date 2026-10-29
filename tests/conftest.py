@@ -22,12 +22,13 @@ def build_collection(
     missing_endpoints=None,
     network: bool = True,
     default_node_monitor: bool = True,
+    profiles: bool = True,
 ) -> CollectionData:
     """Assemble a CollectionData equivalent to a full live collection.
 
-    network=False and default_node_monitor=False simulate a raw cache from
-    before the net_* / ltm_default_node_monitor datasets
-    were collected.
+    network=False, default_node_monitor=False and profiles=False simulate a
+    raw cache from before the net_*, ltm_default_node_monitor and
+    ltm_profile_* / gtm_listener datasets were collected.
     """
     data = CollectionData()
     data.meta = {
@@ -66,6 +67,16 @@ def build_collection(
     }
     if default_node_monitor:
         data.datasets["ltm_default_node_monitor"] = load_fixture("default_node_monitor.json")
+    if profiles:
+        for profile_type in ("client-ssl", "http", "tcp", "server-ssl"):
+            data.datasets[f"ltm_profile_{profile_type}@Common"] = load_fixture(
+                f"profiles_{profile_type}.json"
+            )
+        for virtual in ("vs-web", "vs-idle", "vs-disabled"):
+            data.datasets[f"ltm_virtual_profiles@/Common/{virtual}"] = load_fixture(
+                f"virtual_profiles_{virtual}.json"
+            )
+        data.datasets["gtm_listener"] = load_fixture("gtm_listener.json")
     if network:
         data.datasets["net_self"] = load_fixture("net_self.json")
         data.datasets["net_arp"] = load_fixture("net_arp.json")
