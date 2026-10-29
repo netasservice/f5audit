@@ -7,6 +7,7 @@
     "address": "10.0.0.1",
     "session": "monitor-enabled",
     "state": "up",
-    "priorityGroup": 0
+    "priorityGroup": 0,
+    "monitor": "/Common/mon-member-only "
   }
 ]

@@ -229,6 +229,17 @@ def test_parse_collection_builds_models():
     assert irule.has_dynamic_pool_selection is False
 
     assert parsed.monitors["/Common/mon-orphan"].type == "http"
+    assert parsed.monitors["/Common/mon-orphan"].defaults_from == "/Common/http"
+    assert parsed.monitors["/Common/http"].defaults_from == ""
+    assert parsed.pools["/Common/pool-web"].members[0].monitor == "/Common/mon-member-only"
+    assert parsed.default_node_monitor_collected is True
+    assert parsed.default_node_monitors == ["/Common/icmp"]
+
+
+def test_default_node_monitor_absent_from_old_cache():
+    parsed = parse_collection(build_collection(default_node_monitor=False))
+    assert parsed.default_node_monitor_collected is False
+    assert parsed.default_node_monitors == []
 
 
 def test_parse_collection_standby_state():

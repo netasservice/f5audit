@@ -1,6 +1,12 @@
 """Correlation index tests."""
 
-from f5audit.correlator import correlate, dynamic_reach_partitions, is_builtin_monitor
+from f5audit.correlator import (
+    DEFAULT_NODE_MONITOR,
+    correlate,
+    describe_monitor_users,
+    dynamic_reach_partitions,
+    is_builtin_monitor,
+)
 from f5audit.models import IRule, Pool, PoolMember, VirtualServer
 from f5audit.parsing import parse_collection
 from tests.conftest import build_collection
@@ -159,15 +165,46 @@ def test_unreadable_attached_irule_makes_virtual_pool_selection_unprovable():
     assert "/Common/vs-dead" in correlation.virtuals_with_unprovable_pool_selection
 
 
-def test_monitor_users_includes_pools_and_nodes():
+def test_monitor_users_are_typed_pools_nodes_members_and_parents():
     correlation = correlate(make_parsed())
     assert correlation.monitor_users["/Common/mon-used"] == {
-        "/Common/pool-web",
-        "/Common/pool-dead",
+        ("pool", "/Common/pool-web"),
+        ("pool", "/Common/pool-dead"),
     }
-    # node-orphan uses /Common/icmp as its node monitor.
-    assert "/Common/node-orphan" in correlation.monitor_users["/Common/icmp"]
+    # node-orphan uses /Common/icmp as its node monitor; node-web-1 uses
+    # 'default', which resolves through the ltm default-node-monitor.
+    icmp_users = correlation.monitor_users["/Common/icmp"]
+    assert ("node", "/Common/node-orphan") in icmp_users
+    assert ("node", "/Common/node-web-1") in icmp_users
+    assert (DEFAULT_NODE_MONITOR, "") in icmp_users
+    # A member-level monitor counts as a use of the pool member.
+    assert correlation.monitor_users["/Common/mon-member-only"] == {
+        ("member", "/Common/pool-web /Common/node-web-1:80"),
+    }
+    # A monitor is used by the monitors inheriting from it.
+    assert correlation.monitor_users["/Common/mon-parent"] == {("monitor", "/Common/mon-child")}
+    assert ("monitor", "/Common/mon-used") in correlation.monitor_users["/Common/http"]
     assert "/Common/mon-orphan" not in correlation.monitor_users
+
+
+def test_node_with_default_monitor_without_default_node_monitor_dataset():
+    parsed = parse_collection(build_collection(default_node_monitor=False))
+    correlation = correlate(parsed)
+    assert ("node", "/Common/node-web-1") not in correlation.monitor_users.get(
+        "/Common/icmp", set()
+    )
+
+
+def test_describe_monitor_users():
+    users = {
+        ("member", "/Common/pool-web /Common/node-web-1:80"),
+        ("pool", "/Common/pool-web"),
+        (DEFAULT_NODE_MONITOR, ""),
+    }
+    assert describe_monitor_users(users) == (
+        "ltm default-node-monitor, member /Common/node-web-1:80 of pool /Common/pool-web, "
+        "pool /Common/pool-web"
+    )
 
 
 def test_builtin_monitor_detection():

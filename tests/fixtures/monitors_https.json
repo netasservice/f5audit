@@ -1,0 +1,45 @@
+[
+  {
+    "kind": "tm:ltm:monitor:https:httpsstate",
+    "name": "https",
+    "partition": "Common",
+    "fullPath": "/Common/https",
+    "destination": "*:*",
+    "interval": 5,
+    "timeout": 16,
+    "send": "GET /\\r\\n",
+    "recv": "",
+    "timeUntilUp": 0,
+    "upInterval": 0,
+    "manualResume": "disabled",
+    "transparent": "disabled"
+  },
+  {
+    "kind": "tm:ltm:monitor:https:httpsstate",
+    "name": "mon-parent",
+    "partition": "Common",
+    "fullPath": "/Common/mon-parent",
+    "defaultsFrom": "/Common/https",
+    "interval": 10,
+    "timeout": 31
+  },
+  {
+    "kind": "tm:ltm:monitor:https:httpsstate",
+    "name": "mon-child",
+    "partition": "Common",
+    "fullPath": "/Common/mon-child",
+    "defaultsFrom": "/Common/mon-parent",
+    "interval": 10,
+    "timeout": 31,
+    "send": "GET /health HTTP/1.1\\r\\nHost: app.example.net\\r\\n\\r\\n",
+    "recv": "200 OK"
+  },
+  {
+    "kind": "tm:ltm:monitor:https:httpsstate",
+    "name": "mon-member-only",
+    "partition": "Common",
+    "fullPath": "/Common/mon-member-only",
+    "defaultsFrom": "/Common/https",
+    "interval": 7
+  }
+]

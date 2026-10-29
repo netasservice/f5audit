@@ -19,7 +19,7 @@ from openpyxl.utils import get_column_letter
 
 from . import commands
 from .analyzer import AnalysisResult, ObjectVerdict, Verdict
-from .correlator import Correlation
+from .correlator import Correlation, describe_monitor_users
 from .models import Node, Pool, PoolMember
 from .parsing import ParsedData
 
@@ -215,7 +215,7 @@ def build_tables(
         "pool_findings": _build_pool_findings(parsed, correlation, analysis),
         "virtual_server_findings": _build_virtual_server_findings(parsed, analysis),
         "dead_chains": _build_dead_chains(parsed, correlation, analysis),
-        "monitor_findings": _build_monitor_findings(parsed, analysis),
+        "monitor_findings": _build_monitor_findings(parsed, correlation, analysis),
         "manual_review": _build_manual_review(analysis),
     }
 
@@ -627,16 +627,20 @@ def _build_dead_chains(
     return table
 
 
-def _build_monitor_findings(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
+def _build_monitor_findings(
+    parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
+) -> ReportTable:
     headers = [
         "Monitor",
         "Type",
         "Partition",
+        "Defaults from",
+        "Used by",
         "Verdict",
         "Notes",
         "Suggested command (informational)",
     ]
-    table = ReportTable("Monitor Findings", headers, verdict_columns=(3,))
+    table = ReportTable("Monitor Findings", headers, verdict_columns=(5,))
     for path, verdict in sorted(analysis.monitor_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -646,6 +650,8 @@ def _build_monitor_findings(parsed: ParsedData, analysis: AnalysisResult) -> Rep
                 path,
                 monitor.type,
                 monitor.partition,
+                monitor.defaults_from,
+                describe_monitor_users(correlation.monitor_users.get(path, set())),
                 verdict.verdict,
                 verdict.notes,
                 f"delete ltm monitor {monitor.type} {path}"

@@ -232,5 +232,5 @@ without a full re-collection. Do not point a dev loop at the production manageme
 is load on a plane that also carries HA heartbeats and admin access.
 
 Before the first collection on a new device, run `f5audit validate` and read the
-diagnosis table. It is cheap — a login plus eight probes — and it turns a
+diagnosis table. It is cheap — a login plus a dozen probes — and it turns a
 mid-collection failure into a five-second answer.

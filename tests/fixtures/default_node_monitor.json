@@ -1,0 +1,5 @@
+{
+  "kind": "tm:ltm:default-node-monitor:default-node-monitorstate",
+  "selfLink": "https://localhost/mgmt/tm/ltm/default-node-monitor?ver=17.5.1",
+  "rule": "/Common/icmp "
+}

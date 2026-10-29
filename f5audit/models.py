@@ -45,6 +45,7 @@ class PoolMember:
     ratio: int = 1
     connection_limit: int = 0
     app_service: str = ""
+    monitor: str = ""  # member-level monitor as configured ("default", "/Common/x"), "" if unset
 
 
 @dataclass
@@ -134,6 +135,8 @@ class Monitor:
     partition: str
     name: str
     type: str = ""
+    defaults_from: str = ""  # normalized parent path, "" for a root (built-in) monitor
+    app_service: str = ""  # owning iApp, empty if none
 
 
 @dataclass

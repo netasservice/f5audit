@@ -55,6 +55,8 @@ def minimal_responses():
             "pool_member_stats_pool-web.json"
         ),
         "/mgmt/tm/ltm/monitor/http": load_fixture("monitors_http.json"),
+        "/mgmt/tm/ltm/monitor/https": load_fixture("monitors_https.json"),
+        "/mgmt/tm/ltm/default-node-monitor": load_fixture("default_node_monitor.json"),
         "/mgmt/tm/ltm/virtual/stats": {},
         "/mgmt/tm/ltm/pool/stats": {},
         "/mgmt/tm/ltm/node/stats": {},
@@ -76,6 +78,7 @@ def test_collect_gathers_expected_datasets():
     assert "ltm_monitor_mysql@Common" not in data.datasets
     assert "/mgmt/tm/ltm/monitor/mysql" not in data.meta["missing_endpoints"]
     assert data.get("ltm_monitor_http@Common")
+    assert data.get("ltm_default_node_monitor")["rule"] == "/Common/icmp "
 
 
 def test_collect_gathers_network_datasets():

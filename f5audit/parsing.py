@@ -253,6 +253,9 @@ class ParsedData:
     irules: dict[str, IRule] = field(default_factory=dict)
     policies: dict[str, Policy] = field(default_factory=dict)
     monitors: dict[str, Monitor] = field(default_factory=dict)
+    # Monitors a node with 'monitor default' inherits (ltm default-node-monitor).
+    default_node_monitors: list[str] = field(default_factory=list)
+    default_node_monitor_collected: bool = False  # False => raw cache without it
     network: dict[str, NodeNetworkInfo] = field(default_factory=dict)  # keyed by node address
     network_collected: bool = False  # False => raw cache without net_* datasets
 
@@ -295,6 +298,7 @@ def parse_collection(data: CollectionData) -> ParsedData:
     _parse_irules(data, parsed)
     _parse_policies(data, parsed)
     _parse_monitors(data, parsed)
+    _parse_default_node_monitor(data, parsed)
     _parse_network(data, parsed)
     return parsed
 
@@ -408,6 +412,7 @@ def _parse_pool_member(
         ratio=item.get("ratio", 1),
         connection_limit=item.get("connectionLimit", 0),
         app_service=iapp_owner(item, item.get("fullPath", "")),
+        monitor=(item.get("monitor") or "").strip(),
     )
     entries = member_stats.get(f"{node_full_path}:{port}") or member_stats.get(
         item.get("fullPath", "")
@@ -563,4 +568,12 @@ def _parse_monitors(data: CollectionData, parsed: ParsedData) -> None:
                 partition=item.get("partition", partition),
                 name=item.get("name", ""),
                 type=monitor_type,
+                defaults_from=normalize_ref(item.get("defaultsFrom"), partition),
+                app_service=iapp_owner(item, full_path),
             )
+
+
+def _parse_default_node_monitor(data: CollectionData, parsed: ParsedData) -> None:
+    raw = data.get("ltm_default_node_monitor")
+    parsed.default_node_monitor_collected = raw is not None
+    parsed.default_node_monitors = parse_monitor_refs((raw or {}).get("rule"), "Common")

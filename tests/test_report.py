@@ -79,7 +79,11 @@ def test_orphan_sheets_only_contain_non_in_use_objects():
     assert "/Common/pool-dead" in pool_names
     assert "/Common/pool-web" not in pool_names
     monitor_names = [row[0] for row in tables["monitor_findings"].rows]
-    assert monitor_names == ["/Common/mon-orphan"]
+    assert monitor_names == [
+        "/Common/mon-child",
+        "/Common/mon-orphan",
+        "/Common/mon-parent",
+    ]
 
 
 def cells(table, row):
