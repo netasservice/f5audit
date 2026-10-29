@@ -300,7 +300,7 @@ def cmd_ping(args) -> int:
         print("Error: this does not look like an f5audit xlsx report.", file=sys.stderr)
         return EXIT_ERROR
     if not addresses:
-        print("No removal candidates to ping (the Orphan Nodes sheet has no IPs).")
+        print("No removal candidates to ping (the Node Findings sheet has no IPs).")
         return EXIT_OK
 
     if not args.host:

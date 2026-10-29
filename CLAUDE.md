@@ -53,7 +53,7 @@ strict as the REST invariants above:
    not a ping. Nothing user-controllable is ever executed and nothing on the device is
    created, modified, or deleted — ping is read-only ICMP.
 3. **Only removal candidates are pinged.** IPs are sourced exclusively from the
-   Orphan Nodes sheet — by construction the nodes whose verdict is not `IN USE` — so
+   Node Findings sheet — by construction the nodes whose verdict is not `IN USE` — so
    in-use nodes are never touched.
 4. **paramiko is optional and lazy.** It is the `ssh` extra (`pip install
    'f5audit[ssh]'`), imported only inside `SSHCommandRunner.connect`. The test suite

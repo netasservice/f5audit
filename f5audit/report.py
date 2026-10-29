@@ -211,11 +211,11 @@ def build_tables(
     return {
         "summary": _build_summary(parsed, analysis),
         "inventory": _build_inventory(parsed, correlation, analysis),
-        "orphan_nodes": _build_orphan_nodes(parsed, analysis),
-        "pools": _build_pools(parsed, correlation, analysis),
-        "inactive_virtuals": _build_inactive_virtuals(parsed, analysis),
+        "node_findings": _build_node_findings(parsed, analysis),
+        "pool_findings": _build_pool_findings(parsed, correlation, analysis),
+        "virtual_server_findings": _build_virtual_server_findings(parsed, analysis),
         "dead_chains": _build_dead_chains(parsed, correlation, analysis),
-        "orphan_monitors": _build_orphan_monitors(parsed, analysis),
+        "monitor_findings": _build_monitor_findings(parsed, analysis),
         "manual_review": _build_manual_review(analysis),
     }
 
@@ -397,7 +397,7 @@ def _build_inventory(
     return table
 
 
-def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
+def _build_node_findings(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
     headers = [
         "Node",
         "IP",
@@ -409,7 +409,7 @@ def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportT
         "ARP MAC",
         "Network note",
     ]
-    table = ReportTable("Orphan Nodes", headers, verdict_columns=(4,))
+    table = ReportTable("Node Findings", headers, verdict_columns=(4,))
     for path, verdict in sorted(analysis.node_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -429,7 +429,7 @@ def _build_orphan_nodes(parsed: ParsedData, analysis: AnalysisResult) -> ReportT
     return table
 
 
-def _build_pools(
+def _build_pool_findings(
     parsed: ParsedData, correlation: Correlation, analysis: AnalysisResult
 ) -> ReportTable:
     headers = [
@@ -445,7 +445,7 @@ def _build_pools(
         "Notes",
         *POOL_COMMAND_HEADERS,
     ]
-    table = ReportTable("Orphan-Inactive Pools", headers, verdict_columns=(8,))
+    table = ReportTable("Pool Findings", headers, verdict_columns=(8,))
     for path, verdict in sorted(analysis.pool_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -484,7 +484,7 @@ def _pool_command_cells(correlation: Correlation, pool: Pool, verdict: ObjectVer
     ]
 
 
-def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
+def _build_virtual_server_findings(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
     headers = [
         "Virtual server",
         "VIP:Port",
@@ -499,7 +499,7 @@ def _build_inactive_virtuals(parsed: ParsedData, analysis: AnalysisResult) -> Re
         "Notes",
         *VIRTUAL_COMMAND_HEADERS,
     ]
-    table = ReportTable("Inactive Virtual Servers", headers, verdict_columns=(9,))
+    table = ReportTable("Virtual Server Findings", headers, verdict_columns=(9,))
     for path, verdict in sorted(analysis.virtual_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue
@@ -577,7 +577,7 @@ def _build_dead_chains(
             if kept:
                 notes.append(
                     f"Pool not deleted: still the default pool of {', '.join(kept)}, "
-                    "which is not a removal candidate (see Orphan-Inactive Pools)."
+                    "which is not a removal candidate (see Pool Findings)."
                 )
             else:
                 pool_deleted = True
@@ -593,7 +593,7 @@ def _build_dead_chains(
                 deleted_nodes.append(node)
             else:
                 notes.append(
-                    f"Node {node_path}: remove it from its pools first (see Orphan Nodes)."
+                    f"Node {node_path}: remove it from its pools first (see Node Findings)."
                 )
 
         table.rows.append(
@@ -627,7 +627,7 @@ def _build_dead_chains(
     return table
 
 
-def _build_orphan_monitors(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
+def _build_monitor_findings(parsed: ParsedData, analysis: AnalysisResult) -> ReportTable:
     headers = [
         "Monitor",
         "Type",
@@ -636,7 +636,7 @@ def _build_orphan_monitors(parsed: ParsedData, analysis: AnalysisResult) -> Repo
         "Notes",
         "Suggested command (informational)",
     ]
-    table = ReportTable("Orphan Monitors", headers, verdict_columns=(3,))
+    table = ReportTable("Monitor Findings", headers, verdict_columns=(3,))
     for path, verdict in sorted(analysis.monitor_verdicts.items()):
         if verdict.verdict == Verdict.IN_USE:
             continue

@@ -3,7 +3,7 @@
 This module is the single, documented exception to the REST-only design
 (see CLAUDE.md, "The one SSH exception"). It never takes part in
 collection or analysis: it opens an already generated xlsx report, reads
-the IPs of the Orphan Nodes sheet (by construction the nodes that are
+the IPs of the Node Findings sheet (by construction the nodes that are
 NOT in use — the removal candidates), pings each unique IPv4 once from
 the BIG-IP over SSH, and writes the results back into the workbook.
 
@@ -40,10 +40,12 @@ logger = logging.getLogger("f5audit.pingcheck")
 STATUS_HEADER = PING_STATUS_HEADER
 NOTE_HEADER = PING_NOTE_HEADER
 IP_HEADER = "IP"
-# IPs come only from Orphan Nodes: the sheet is by construction the list
+# IPs come only from Node Findings: the sheet is by construction the list
 # of every node whose verdict is not IN USE, i.e. the removal candidates.
-ADDRESS_SOURCE_SHEET = "Orphan Nodes"
-ENRICHED_SHEETS = ("Inventory", "Orphan Nodes")
+# Reports written by earlier releases call it "Orphan Nodes"; both titles
+# are accepted so old reports can still be annotated.
+ADDRESS_SOURCE_SHEET = "Node Findings"
+LEGACY_ADDRESS_SOURCE_SHEET = "Orphan Nodes"
 
 STATUS_YES = "YES"
 STATUS_NO = "NO"
@@ -300,21 +302,29 @@ def _locate_column(sheet, header: str) -> int | None:
     return None
 
 
+def _address_source_title(workbook):
+    for title in (ADDRESS_SOURCE_SHEET, LEGACY_ADDRESS_SOURCE_SHEET):
+        if title in workbook.sheetnames:
+            return title
+    return None
+
+
 def _cell_text(sheet, row: int, column: int) -> str:
     value = sheet.cell(row=row, column=column).value
     return str(value).strip() if value is not None else ""
 
 
 def collect_addresses(workbook) -> tuple[list[str], list[str]]:
-    """Ordered unique raw addresses from the Orphan Nodes IP column."""
+    """Ordered unique raw addresses from the Node Findings IP column."""
     warnings: list[str] = []
-    if ADDRESS_SOURCE_SHEET not in workbook.sheetnames:
+    title = _address_source_title(workbook)
+    if title is None:
         warnings.append(f"Sheet '{ADDRESS_SOURCE_SHEET}' not found in the report")
         return [], warnings
-    sheet = workbook[ADDRESS_SOURCE_SHEET]
+    sheet = workbook[title]
     ip_column = _locate_column(sheet, IP_HEADER)
     if ip_column is None:
-        warnings.append(f"No '{IP_HEADER}' column on sheet '{ADDRESS_SOURCE_SHEET}'")
+        warnings.append(f"No '{IP_HEADER}' column on sheet '{title}'")
         return [], warnings
     addresses: list[str] = []
     seen: set[str] = set()
@@ -341,7 +351,8 @@ def enrich_workbook(workbook, results: dict[str, PingResult]) -> list[str]:
     (IN USE nodes, empty cells) get blank cells.
     """
     warnings: list[str] = []
-    for title in ENRICHED_SHEETS:
+    address_title = _address_source_title(workbook) or ADDRESS_SOURCE_SHEET
+    for title in ("Inventory", address_title):
         if title not in workbook.sheetnames:
             warnings.append(f"Sheet '{title}' not found; skipped")
             continue
