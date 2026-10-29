@@ -167,10 +167,8 @@ def test_unreadable_attached_irule_makes_virtual_pool_selection_unprovable():
 
 def test_monitor_users_are_typed_pools_nodes_members_and_parents():
     correlation = correlate(make_parsed())
-    assert correlation.monitor_users["/Common/mon-used"] == {
-        ("pool", "/Common/pool-web"),
-        ("pool", "/Common/pool-dead"),
-    }
+    assert correlation.monitor_users["/Common/mon-used"] == {("pool", "/Common/pool-web")}
+    assert correlation.monitor_users["/Common/mon-dead-only"] == {("pool", "/Common/pool-dead")}
     # node-orphan uses /Common/icmp as its node monitor; node-web-1 uses
     # 'default', which resolves through the ltm default-node-monitor.
     icmp_users = correlation.monitor_users["/Common/icmp"]

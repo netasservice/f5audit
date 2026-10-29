@@ -81,6 +81,7 @@ def test_orphan_sheets_only_contain_non_in_use_objects():
     monitor_names = [row[0] for row in tables["monitor_findings"].rows]
     assert monitor_names == [
         "/Common/mon-child",
+        "/Common/mon-dead-only",
         "/Common/mon-orphan",
         "/Common/mon-parent",
     ]
@@ -123,7 +124,7 @@ def test_pool_commands_only_for_orphan_and_offline():
     assert offline["Delete pool"] == "delete ltm pool /Common/pool-dead"
     assert offline["Recreate pool (rollback)"] == (
         "create ltm pool /Common/pool-dead members add { /Common/node-dead:443 } "
-        "monitor /Common/mon-used"
+        "monitor /Common/mon-dead-only"
     )
     assert offline["Reattach pool to virtual servers (rollback)"] == (
         "modify ltm virtual /Common/vs-dead pool /Common/pool-dead"
@@ -603,3 +604,16 @@ def test_monitor_rollback_notes_missing_parent_and_masked_secrets():
     assert "Rollback omits password" in orphan["Notes"]
     assert "password" not in orphan["Create monitor (rollback)"]
     assert "user-defined variables" in orphan["Notes"]
+
+
+def test_monitor_findings_commands_for_offline_monitor():
+    _, tables = make_tables()
+    row = table_row(tables, "monitor_findings", "/Common/mon-dead-only")
+    assert row["Verdict"] == Verdict.OFFLINE_CANDIDATE
+    assert row["Used by"] == "pool /Common/pool-dead"
+    assert "tmsh refuses the delete" in row["Notes"]
+    assert row["Delete monitor"] == "delete ltm monitor https /Common/mon-dead-only"
+    assert row["Create monitor (rollback)"] == (
+        "create ltm monitor https /Common/mon-dead-only defaults-from /Common/https "
+        'interval 10 recv "alive" timeout 31'
+    )
